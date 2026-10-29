@@ -24,7 +24,7 @@
 
 ## 🌟 What is FinTrack AI?
 
-**FinTrack AI** is a privacy-first, zero-trust financial command center that reimagines mobile accounting. Unlike standard finance apps that upload your bank SMS messages, account numbers, and transaction logs to cloud marketing servers, **FinTrack AI runs 100% locally on your device**. 
+**FinTrack AI** is a privacy-first, fully-trust financial command center that reimagines mobile accounting. Unlike standard finance apps that upload your bank SMS messages, account numbers, and transaction logs to cloud marketing servers, **FinTrack AI runs 100% locally on your device**. 
 
 Every byte of financial telemetry is sealed inside a **256-bit AES SQLCipher database**, protected by your phone's **hardware security module (Android Keystore)** and PBKDF2-HMAC-SHA256 cryptography executed strictly on background worker threads.
 
