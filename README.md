@@ -174,7 +174,7 @@ FinTrack/
 ### Prerequisites
 - [Flutter SDK](https://flutter.dev/docs/get-started/install) (version 3.13.1 or higher)
 - Android SDK 34 / Java 17
-- Optional: Google Gemini API Key (get free at [aistudio.google.com](https://aistudio.google.com))
+- Google Gemini API Key (get free at [aistudio.google.com](https://aistudio.google.com))
 
 ### 1. Clone the Repository
 ```bash
