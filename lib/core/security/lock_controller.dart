@@ -107,7 +107,10 @@ final lockControllerProvider =
 
 class LockController extends Notifier<VaultLockState> {
   DateTime? _backgroundedAt;
+  bool _isBiometricDialogActive = false;
   static const Duration autoLockTimeout = Duration(seconds: 30);
+
+  bool get isBiometricDialogActive => _isBiometricDialogActive;
 
   @override
   VaultLockState build() {
@@ -198,8 +201,7 @@ class LockController extends Notifier<VaultLockState> {
     );
 
     if (valid) {
-      await _store.setFailedAttempts(0);
-      await _store.setLockoutUntil(null);
+      // Transition UI state immediately for 60fps / 120fps instant unlock
       state = state.copyWith(
         status: VaultStatus.unlocked,
         failedAttempts: 0,
@@ -208,6 +210,8 @@ class LockController extends Notifier<VaultLockState> {
         showDeniedScreen: false,
         showWelcomeScreen: true,
       );
+      await _store.setFailedAttempts(0);
+      await _store.setLockoutUntil(null);
       return true;
     }
 
@@ -236,24 +240,30 @@ class LockController extends Notifier<VaultLockState> {
   }
 
   Future<bool> unlockWithBiometrics() async {
-    if (!state.biometricAvailable) return false;
+    if (!state.biometricAvailable || _isBiometricDialogActive) return false;
     if (state.isCoolingDown(DateTime.now())) return false;
 
-    final ok = await _biometric.authenticate();
-    if (ok) {
-      await _store.setFailedAttempts(0);
-      await _store.setLockoutUntil(null);
-      state = state.copyWith(
-        status: VaultStatus.unlocked,
-        failedAttempts: 0,
-        clearLockout: true,
-        clearError: true,
-        showDeniedScreen: false,
-        showWelcomeScreen: true,
-      );
-      return true;
+    _isBiometricDialogActive = true;
+    try {
+      final ok = await _biometric.authenticate();
+      if (ok) {
+        // Update state immediately before async storage writes for instant 120fps unlock
+        state = state.copyWith(
+          status: VaultStatus.unlocked,
+          failedAttempts: 0,
+          clearLockout: true,
+          clearError: true,
+          showDeniedScreen: false,
+          showWelcomeScreen: true,
+        );
+        await _store.setFailedAttempts(0);
+        await _store.setLockoutUntil(null);
+        return true;
+      }
+      return false;
+    } finally {
+      _isBiometricDialogActive = false;
     }
-    return false;
   }
 
   void dismissDeniedScreen() {
@@ -309,6 +319,7 @@ class LockController extends Notifier<VaultLockState> {
   }
 
   void onAppBackgrounded({DateTime? at}) {
+    if (_isBiometricDialogActive) return;
     if (state.status == VaultStatus.unlocked) {
       _backgroundedAt = at ?? DateTime.now();
       // Immediately lock when minimized or closed if alwaysLockOnMinimize is enabled
@@ -319,6 +330,7 @@ class LockController extends Notifier<VaultLockState> {
   }
 
   void onAppResumed({DateTime? at}) {
+    if (_isBiometricDialogActive) return;
     final now = at ?? DateTime.now();
     if (_backgroundedAt != null) {
       if (state.alwaysLockOnMinimize ||

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../app/motion/motion.dart';
 import '../../../app/theme/luxe_tokens.dart';
 import '../../../core/db/models.dart';
@@ -23,6 +24,7 @@ class HomeTab extends ConsumerStatefulWidget {
 }
 
 class _HomeTabState extends ConsumerState<HomeTab> {
+  static final DateFormat _txnDateFormat = DateFormat('dd MMM • hh:mm a');
   String _selectedCategoryFilter = 'all';
   bool _isSyncingSms = false;
 
@@ -656,144 +658,183 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                   children: filteredTxns.take(30).map((txn) {
                     final cat = state.categoryById(txn.categoryId);
                     final isCredit = txn.type == TxnType.credit;
-                    final dateFormatted = DateFormat(
-                      'dd MMM • hh:mm a',
-                    ).format(txn.occurredAt);
+                    final dateFormatted = _txnDateFormat.format(txn.occurredAt);
 
-                    return Dismissible(
-                      key: ValueKey(txn.id),
-                      direction: DismissDirection.endToStart,
-                      background: Container(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        alignment: Alignment.centerRight,
-                        decoration: BoxDecoration(
-                          color: luxe.crimson.withValues(alpha: 0.25),
-                          borderRadius: BorderRadius.circular(20),
+                    return RepaintBoundary(
+                      key: ValueKey('rb_${txn.id}'),
+                      child: Dismissible(
+                        key: ValueKey(txn.id),
+                        direction: DismissDirection.endToStart,
+                        background: Container(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          alignment: Alignment.centerRight,
+                          decoration: BoxDecoration(
+                            color: luxe.crimson.withValues(alpha: 0.25),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Icon(
+                            Icons.delete_outline_rounded,
+                            color: luxe.crimson,
+                          ),
                         ),
-                        child: Icon(
-                          Icons.delete_outline_rounded,
-                          color: luxe.crimson,
-                        ),
-                      ),
-                      onDismissed: (_) => ref
-                          .read(finTrackControllerProvider.notifier)
-                          .deleteTransaction(txn.id),
-                      child: GlassCard(
-                        margin: const EdgeInsets.only(bottom: 10),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 14,
-                        ),
-                        borderRadius: 20,
-                        child: Row(
-                          children: [
-                            Container(
-                              width: 44,
-                              height: 44,
-                              decoration: BoxDecoration(
-                                color: Color(
-                                  cat.colorValue,
-                                ).withValues(alpha: 0.16),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
+                        onDismissed: (_) => ref
+                            .read(finTrackControllerProvider.notifier)
+                            .deleteTransaction(txn.id),
+                        child: GlassCard(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
+                          ),
+                          borderRadius: 20,
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 44,
+                                height: 44,
+                                decoration: BoxDecoration(
                                   color: Color(
                                     cat.colorValue,
-                                  ).withValues(alpha: 0.45),
+                                  ).withValues(alpha: 0.16),
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: Color(
+                                      cat.colorValue,
+                                    ).withValues(alpha: 0.45),
+                                  ),
+                                ),
+                                child: Icon(
+                                  isCredit
+                                      ? Icons.south_west_rounded
+                                      : Icons.north_east_rounded,
+                                  color: isCredit
+                                      ? luxe.emerald
+                                      : Color(cat.colorValue),
+                                  size: 20,
                                 ),
                               ),
-                              child: Icon(
-                                isCredit
-                                    ? Icons.south_west_rounded
-                                    : Icons.north_east_rounded,
-                                color: isCredit
-                                    ? luxe.emerald
-                                    : Color(cat.colorValue),
-                                size: 20,
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      txn.title,
+                                      style: Theme.of(
+                                        context,
+                                      ).textTheme.titleMedium,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      '${cat.name} • ${txn.paymentMode.label} • $dateFormatted',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(fontSize: 12),
+                                    ),
+                                    if (txn.tags.isNotEmpty) ...[
+                                      const SizedBox(height: 5),
+                                      Wrap(
+                                        spacing: 6,
+                                        children: txn.tags
+                                            .map(
+                                              (t) => Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 7,
+                                                      vertical: 2,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: luxe.cyan.withValues(
+                                                    alpha: 0.12,
+                                                  ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(6),
+                                                ),
+                                                child: Text(
+                                                  t,
+                                                  style: TextStyle(
+                                                    fontSize: 10,
+                                                    fontWeight: FontWeight.w600,
+                                                    color: luxe.cyan,
+                                                  ),
+                                                ),
+                                              ),
+                                            )
+                                            .toList(),
+                                      ),
+                                    ],
+                                  ],
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 14),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                              const SizedBox(width: 8),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
                                 children: [
-                                  Text(
-                                    txn.title,
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.titleMedium,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
+                                  AnimatedAmount(
+                                    paise: txn.amountPaise,
+                                    showSign: true,
+                                    tone: isCredit
+                                        ? AmountTone.credit
+                                        : AmountTone.debit,
+                                    style:
+                                        Theme.of(context).textTheme.titleLarge,
                                   ),
-                                  const SizedBox(height: 3),
+                                  const SizedBox(height: 2),
                                   Text(
-                                    '${cat.name} • ${txn.paymentMode.label} • $dateFormatted',
+                                    txn.source.name.toUpperCase(),
                                     style: Theme.of(context)
                                         .textTheme
-                                        .bodyMedium
-                                        ?.copyWith(fontSize: 12),
+                                        .labelSmall
+                                        ?.copyWith(fontSize: 9),
                                   ),
-                                  if (txn.tags.isNotEmpty) ...[
-                                    const SizedBox(height: 5),
-                                    Wrap(
-                                      spacing: 6,
-                                      children: txn.tags
-                                          .map(
-                                            (t) => Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 7,
-                                                    vertical: 2,
-                                                  ),
-                                              decoration: BoxDecoration(
-                                                color: luxe.cyan.withValues(
-                                                  alpha: 0.12,
-                                                ),
-                                                borderRadius:
-                                                    BorderRadius.circular(6),
-                                              ),
-                                              child: Text(
-                                                t,
-                                                style: TextStyle(
-                                                  fontSize: 10,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: luxe.cyan,
-                                                ),
-                                              ),
-                                            ),
-                                          )
-                                          .toList(),
-                                    ),
-                                  ],
                                 ],
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                AnimatedAmount(
-                                  paise: txn.amountPaise,
-                                  showSign: true,
-                                  tone: isCredit
-                                      ? AmountTone.credit
-                                      : AmountTone.debit,
-                                  style: Theme.of(context).textTheme.titleLarge,
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  txn.source.name.toUpperCase(),
-                                  style: Theme.of(context).textTheme.labelSmall
-                                      ?.copyWith(fontSize: 9),
-                                ),
-                              ],
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ),
                     );
                   }).toList(),
                 ),
+        ),
+        Center(
+          child: InkWell(
+            onTap: () => launchUrl(
+              Uri.parse('https://github.com/sangeeth2008'),
+              mode: LaunchMode.externalApplication,
+            ),
+            borderRadius: BorderRadius.circular(99),
+            child: Container(
+              margin: const EdgeInsets.only(top: 24, bottom: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: luxe.surfaceGlass,
+                borderRadius: BorderRadius.circular(99),
+                border: Border.all(color: luxe.borderSubtle),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.code_rounded, size: 14, color: luxe.cyan),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Built by Sangeeth Sasikumar K S • @sangeeth2008',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: luxe.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.open_in_new_rounded, size: 12, color: luxe.cyan),
+                ],
+              ),
+            ),
+          ),
         ),
       ],
     );

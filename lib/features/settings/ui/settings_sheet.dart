@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../app/motion/motion.dart';
 import '../../../app/theme/luxe_tokens.dart';
 import '../../../core/security/lock_controller.dart';
@@ -644,6 +645,78 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+            // Developer & Architect Watermark Card
+            GlassCard(
+              padding: const EdgeInsets.all(16),
+              borderColor: luxe.cyan.withValues(alpha: 0.55),
+              glowColor: luxe.cyan,
+              onTap: () => launchUrl(
+                Uri.parse('https://github.com/sangeeth2008'),
+                mode: LaunchMode.externalApplication,
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 48,
+                    height: 48,
+                    decoration: BoxDecoration(
+                      gradient: luxe.copilotGradient,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Icon(
+                      Icons.code_rounded,
+                      color: Color(0xFF041510),
+                      size: 26,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Sangeeth Sasikumar K S',
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Creator & Lead Architect • FinTrack AI',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                fontSize: 12,
+                                color: luxe.textSecondary,
+                              ),
+                        ),
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Text(
+                              'github.com/sangeeth2008',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: luxe.cyan,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(Icons.open_in_new_rounded,
+                                size: 12, color: luxe.cyan),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    size: 16,
+                    color: luxe.cyan,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
           ],
         ),
       ),

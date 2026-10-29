@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../app/motion/motion.dart';
 import '../../../app/theme/luxe_tokens.dart';
 import '../../../core/state/fintrack_controller.dart';
@@ -496,6 +497,38 @@ class _ProfileQrSheetState extends ConsumerState<ProfileQrSheet> {
                   ),
                 );
               },
+            ),
+            const SizedBox(height: 12),
+            Center(
+              child: InkWell(
+                onTap: () => launchUrl(
+                  Uri.parse('https://github.com/sangeeth2008'),
+                  mode: LaunchMode.externalApplication,
+                ),
+                borderRadius: BorderRadius.circular(99),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.code_rounded, size: 13, color: luxe.cyan),
+                      const SizedBox(width: 5),
+                      Text(
+                        'Built by Sangeeth Sasikumar K S • @sangeeth2008',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: luxe.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(Icons.open_in_new_rounded,
+                          size: 11, color: luxe.cyan),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ],
         ),

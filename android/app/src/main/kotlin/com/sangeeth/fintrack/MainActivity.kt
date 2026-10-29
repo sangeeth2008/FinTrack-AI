@@ -6,6 +6,10 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.view.Surface
+import android.view.SurfaceView
+import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -20,6 +24,7 @@ class MainActivity : FlutterFragmentActivity() {
     private var methodChannel: MethodChannel? = null
     private var pendingSharedPayload: Map<String, String>? = null
     private var pendingNotificationRoute: String? = null
+    private var activeRefreshRate: Float = 60.0f
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -28,6 +33,23 @@ class MainActivity : FlutterFragmentActivity() {
         ReminderScheduler.reschedule(applicationContext)
         handleNotificationIntent(intent)
         handleIncomingIntent(intent, isNewIntent = false)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        enableHighRefreshRate()
+    }
+
+    override fun onPostResume() {
+        super.onPostResume()
+        enableHighRefreshRate()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            enableHighRefreshRate()
+        }
     }
 
     private fun handleNotificationIntent(intent: Intent?) {
@@ -50,6 +72,8 @@ class MainActivity : FlutterFragmentActivity() {
             val modes = display.supportedModes
             val currentMode = display.mode
             var bestMode = currentMode
+
+            // 1. Prefer highest refresh rate at native physical resolution (e.g. 120Hz / 144Hz / 90Hz / 60Hz)
             for (mode in modes) {
                 if (mode.physicalWidth == currentMode.physicalWidth &&
                     mode.physicalHeight == currentMode.physicalHeight &&
@@ -58,10 +82,69 @@ class MainActivity : FlutterFragmentActivity() {
                     bestMode = mode
                 }
             }
-            if (bestMode.modeId != currentMode.modeId) {
-                val params = window.attributes
+
+            // 2. Fallback: if OEM switched resolution, pick highest refresh rate mode overall
+            if (bestMode.refreshRate <= 60.1f) {
+                for (mode in modes) {
+                    if (mode.refreshRate > bestMode.refreshRate) {
+                        bestMode = mode
+                    }
+                }
+            }
+
+            activeRefreshRate = bestMode.refreshRate
+
+            val params = window.attributes
+            var changed = false
+            if (params.preferredDisplayModeId != bestMode.modeId) {
                 params.preferredDisplayModeId = bestMode.modeId
+                changed = true
+            }
+            if (params.preferredRefreshRate != bestMode.refreshRate) {
+                params.preferredRefreshRate = bestMode.refreshRate
+                changed = true
+            }
+            if (changed) {
                 window.attributes = params
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                window.isFrameRatePowerSavingsBalanced = false
+            }
+
+            // 3. Hint SurfaceFlinger directly on the Flutter SurfaceView for locked 120fps / 60fps
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                window.decorView.post {
+                    applySurfaceFrameRate(window.decorView, bestMode.refreshRate)
+                }
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun applySurfaceFrameRate(view: View?, targetRate: Float) {
+        if (view == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        try {
+            if (view is SurfaceView) {
+                val surface = view.holder.surface
+                if (surface != null && surface.isValid) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        surface.setFrameRate(
+                            targetRate,
+                            Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
+                            Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS
+                        )
+                    } else {
+                        surface.setFrameRate(
+                            targetRate,
+                            Surface.FRAME_RATE_COMPATIBILITY_DEFAULT
+                        )
+                    }
+                }
+            } else if (view is ViewGroup) {
+                for (i in 0 until view.childCount) {
+                    applySurfaceFrameRate(view.getChildAt(i), targetRate)
+                }
             }
         } catch (_: Exception) {
         }

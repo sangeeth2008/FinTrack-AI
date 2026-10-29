@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/native/reminder_service.dart';
@@ -45,7 +44,13 @@ class _FinTrackAppState extends ConsumerState<FinTrackApp> {
     super.initState();
     _lifecycleListener = AppLifecycleListener(
       onInactive: () {
-        if (mounted) setState(() => _isPrivacyShieldVisible = true);
+        final lockNotifier = ref.read(lockControllerProvider.notifier);
+        final lockState = ref.read(lockControllerProvider);
+        if (mounted &&
+            lockState.status == VaultStatus.unlocked &&
+            !lockNotifier.isBiometricDialogActive) {
+          setState(() => _isPrivacyShieldVisible = true);
+        }
       },
       onHide: () {
         ref.read(lockControllerProvider.notifier).onAppBackgrounded();
@@ -57,15 +62,20 @@ class _FinTrackAppState extends ConsumerState<FinTrackApp> {
         ref.read(lockControllerProvider.notifier).onAppBackgrounded();
       },
       onResume: () {
-        if (mounted) setState(() => _isPrivacyShieldVisible = false);
-        ref.read(lockControllerProvider.notifier).onAppResumed();
-        // Auto-sync bank SMS when returning to app if enabled
-        final finState = ref.read(finTrackControllerProvider);
-        if (finState.autoSmsEnabled && finState.smsPermissionGranted) {
-          ref
-              .read(finTrackControllerProvider.notifier)
-              .syncBankSmsInbox(requestPermissionIfNeeded: false);
+        if (mounted && _isPrivacyShieldVisible) {
+          setState(() => _isPrivacyShieldVisible = false);
         }
+        ref.read(lockControllerProvider.notifier).onAppResumed();
+        // Defer clipboard/SMS check by 650ms so unlock & resume animations run at locked 120fps/60fps
+        Future.delayed(const Duration(milliseconds: 650), () {
+          if (!mounted) return;
+          final finState = ref.read(finTrackControllerProvider);
+          if (finState.autoSmsEnabled && finState.smsPermissionGranted) {
+            ref
+                .read(finTrackControllerProvider.notifier)
+                .syncBankSmsInbox(requestPermissionIfNeeded: false);
+          }
+        });
       },
     );
   }
@@ -81,14 +91,7 @@ class _FinTrackAppState extends ConsumerState<FinTrackApp> {
     final finState = ref.watch(finTrackControllerProvider);
     final lockState = ref.watch(lockControllerProvider);
 
-    Widget currentHome;
-    if (lockState.status != VaultStatus.unlocked) {
-      currentHome = const VaultLockScreen(key: ValueKey('locked_screen'));
-    } else if (lockState.showWelcomeScreen) {
-      currentHome = const VaultWelcomeScreen(key: ValueKey('welcome_screen'));
-    } else {
-      currentHome = const MainVaultShell(key: ValueKey('unlocked_shell'));
-    }
+    final isUnlocked = lockState.status == VaultStatus.unlocked;
 
     return MaterialApp(
       title: 'FinTrack AI',
@@ -97,23 +100,23 @@ class _FinTrackAppState extends ConsumerState<FinTrackApp> {
       theme: LuxeTheme.light(),
       darkTheme: LuxeTheme.dark(),
       themeMode: finState.themeMode,
-      themeAnimationDuration: LuxeMotion.medium,
-      themeAnimationCurve: LuxeMotion.emphasized,
+      themeAnimationDuration: const Duration(milliseconds: 180),
+      themeAnimationCurve: Curves.easeOutCubic,
       builder: (context, child) {
         return Stack(
           fit: StackFit.expand,
           children: [
             ?child,
             if (_isPrivacyShieldVisible)
-              BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                child: Container(
-                  color: Colors.black.withValues(alpha: 0.48),
-                  alignment: Alignment.center,
-                  child: const Icon(
-                    Icons.shield_moon_rounded,
-                    size: 58,
-                    color: Color(0xFF10E5A0),
+              const RepaintBoundary(
+                child: ColoredBox(
+                  color: Color(0xF2060A0E),
+                  child: Center(
+                    child: Icon(
+                      Icons.shield_moon_rounded,
+                      size: 58,
+                      color: Color(0xFF10E5A0),
+                    ),
                   ),
                 ),
               ),
@@ -121,19 +124,32 @@ class _FinTrackAppState extends ConsumerState<FinTrackApp> {
         );
       },
       home: AnimatedSwitcher(
-        duration: LuxeMotion.medium,
-        switchInCurve: LuxeMotion.decelerate,
+        duration: const Duration(milliseconds: 200),
+        switchInCurve: Curves.easeOutCubic,
         switchOutCurve: Curves.easeInCubic,
         transitionBuilder: (child, animation) {
-          return FadeTransition(
-            opacity: animation,
-            child: ScaleTransition(
-              scale: Tween<double>(begin: 0.96, end: 1.0).animate(animation),
-              child: child,
-            ),
-          );
+          return FadeTransition(opacity: animation, child: child);
         },
-        child: currentHome,
+        child: !isUnlocked
+            ? const RepaintBoundary(
+                key: ValueKey('locked_screen'),
+                child: VaultLockScreen(),
+              )
+            : Stack(
+                key: const ValueKey('unlocked_stack'),
+                fit: StackFit.expand,
+                children: [
+                  const RepaintBoundary(
+                    child: MainVaultShell(key: ValueKey('unlocked_shell')),
+                  ),
+                  if (lockState.showWelcomeScreen)
+                    const RepaintBoundary(
+                      child: VaultWelcomeScreen(
+                        key: ValueKey('welcome_screen'),
+                      ),
+                    ),
+                ],
+              ),
       ),
     );
   }

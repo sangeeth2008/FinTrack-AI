@@ -196,144 +196,215 @@ class _VaultLockScreenState extends ConsumerState<VaultLockScreen> {
 
     return LuxeScaffold(
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-          child: Column(
-            children: [
-              const Spacer(flex: 1),
-              Container(
-                width: 84,
-                height: 84,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(24),
-                  boxShadow: [
-                    BoxShadow(
-                      color: luxe.emerald.withValues(alpha: 0.42),
-                      blurRadius: 32,
-                      spreadRadius: 2,
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(24),
-                  child: Image.asset(
-                    'assets/images/app_logo.png',
-                    width: 84,
-                    height: 84,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-              )
-                  .animate()
-                  .scale(duration: LuxeMotion.medium, curve: LuxeMotion.bounce)
-                  .fadeIn(),
-              const SizedBox(height: 18),
-              Text(
-                titleText,
-                style: Theme.of(context).textTheme.displaySmall,
-                textAlign: TextAlign.center,
-              ).animate().fadeIn(delay: 80.ms).slideY(begin: 0.15, end: 0),
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Text(
-                  subtitleText,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: _hasError ? luxe.crimson : luxe.textSecondary,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-              const SizedBox(height: 24),
-              PinDots(
-                filledCount: _enteredPin.length,
-                hasError: _hasError,
-              ),
-              if (_enteredPin.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                TextButton.icon(
-                  onPressed: _onClearAll,
-                  icon: Icon(
-                    Icons.restart_alt_rounded,
-                    size: 16,
-                    color: luxe.crimson,
-                  ),
-                  label: Text(
-                    'Clear Entered Digits',
-                    style: TextStyle(
-                      color: luxe.crimson,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-              if (isOnboarding && lockState.biometricAvailable) ...[
-                const SizedBox(height: 16),
-                GlassCard(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 10,
-                  ),
-                  borderRadius: 18,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: IntrinsicHeight(
+                  child: Column(
                     children: [
-                      Icon(
-                        Icons.fingerprint_rounded,
-                        color: luxe.emerald,
-                        size: 22,
-                      ),
-                      const SizedBox(width: 10),
+                      const Spacer(flex: 1),
+                      Container(
+                        width: 76,
+                        height: 76,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(22),
+                          boxShadow: [
+                            BoxShadow(
+                              color: luxe.emerald.withValues(alpha: 0.42),
+                              blurRadius: 28,
+                              spreadRadius: 2,
+                            ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(22),
+                          child: Image.asset(
+                            'assets/images/app_logo.png',
+                            width: 76,
+                            height: 76,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      )
+                          .animate()
+                          .scale(
+                              duration: LuxeMotion.medium,
+                              curve: LuxeMotion.bounce)
+                          .fadeIn(),
+                      const SizedBox(height: 14),
                       Text(
-                        'Always Require Biometric Unlock',
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: luxe.textPrimary,
+                        titleText,
+                        style: Theme.of(context).textTheme.displaySmall,
+                        textAlign: TextAlign.center,
+                      )
+                          .animate()
+                          .fadeIn(delay: 80.ms)
+                          .slideY(begin: 0.15, end: 0),
+                      const SizedBox(height: 6),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Text(
+                          subtitleText,
+                          style:
+                              Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    color: _hasError
+                                        ? luxe.crimson
+                                        : luxe.textSecondary,
+                                  ),
+                          textAlign: TextAlign.center,
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      Switch.adaptive(
-                        value: _enableBiometricOnSetup,
-                        activeTrackColor: luxe.emerald,
-                        onChanged: (v) =>
-                            setState(() => _enableBiometricOnSetup = v),
+                      const SizedBox(height: 18),
+                      PinDots(
+                        filledCount: _enteredPin.length,
+                        hasError: _hasError,
                       ),
+                      if (_enteredPin.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        TextButton.icon(
+                          onPressed: _onClearAll,
+                          icon: Icon(
+                            Icons.restart_alt_rounded,
+                            size: 16,
+                            color: luxe.crimson,
+                          ),
+                          label: Text(
+                            'Clear Entered Digits',
+                            style: TextStyle(
+                              color: luxe.crimson,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (isOnboarding && lockState.biometricAvailable) ...[
+                        const SizedBox(height: 12),
+                        GlassCard(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          borderRadius: 18,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.fingerprint_rounded,
+                                color: luxe.emerald,
+                                size: 22,
+                              ),
+                              const SizedBox(width: 10),
+                              Text(
+                                'Always Require Biometric Unlock',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyMedium
+                                    ?.copyWith(
+                                      color: luxe.textPrimary,
+                                    ),
+                              ),
+                              const SizedBox(width: 8),
+                              Switch.adaptive(
+                                value: _enableBiometricOnSetup,
+                                activeTrackColor: luxe.emerald,
+                                onChanged: (v) =>
+                                    setState(() => _enableBiometricOnSetup = v),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      const Spacer(flex: 1),
+                      GlassNumPad(
+                        onDigit: _onDigitPressed,
+                        onBackspace: _onBackspace,
+                        onClear: _onClearAll,
+                        hasEnteredDigits: _enteredPin.isNotEmpty,
+                        showBiometric:
+                            !isOnboarding && lockState.biometricAvailable,
+                        onBiometric: () => ref
+                            .read(lockControllerProvider.notifier)
+                            .unlockWithBiometrics(),
+                      )
+                          .animate()
+                          .fadeIn(delay: 140.ms)
+                          .slideY(begin: 0.08, end: 0),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.verified_user_rounded,
+                            size: 14,
+                            color: luxe.emerald,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            '3-STRIKE SHIELD • ${lockState.lockoutDurationMinutes}M AUTO-LOCKOUT • SQLCIPHER',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
+                                  color: luxe.textMuted,
+                                ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      InkWell(
+                        onTap: () => launchUrl(
+                          Uri.parse('https://github.com/sangeeth2008'),
+                          mode: LaunchMode.externalApplication,
+                        ),
+                        borderRadius: BorderRadius.circular(99),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 4),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.code_rounded,
+                                  size: 13, color: luxe.cyan),
+                              const SizedBox(width: 5),
+                              Text(
+                                'Built by Sangeeth Sasikumar K S',
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: luxe.textSecondary,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                '• github.com/sangeeth2008',
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w500,
+                                  color: luxe.cyan,
+                                ),
+                              ),
+                              const SizedBox(width: 3),
+                              Icon(
+                                Icons.open_in_new_rounded,
+                                size: 11,
+                                color: luxe.cyan,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
                     ],
                   ),
                 ),
-              ],
-              const Spacer(flex: 1),
-              GlassNumPad(
-                onDigit: _onDigitPressed,
-                onBackspace: _onBackspace,
-                onClear: _onClearAll,
-                hasEnteredDigits: _enteredPin.isNotEmpty,
-                showBiometric: !isOnboarding && lockState.biometricAvailable,
-                onBiometric: () => ref
-                    .read(lockControllerProvider.notifier)
-                    .unlockWithBiometrics(),
-              ).animate().fadeIn(delay: 140.ms).slideY(begin: 0.08, end: 0),
-              const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.verified_user_rounded,
-                    size: 14,
-                    color: luxe.emerald,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    '3-STRIKE SHIELD • ${lockState.lockoutDurationMinutes}M AUTO-LOCKOUT • SQLCIPHER',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: luxe.textMuted,
-                    ),
-                  ),
-                ],
               ),
-              const SizedBox(height: 6),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -525,7 +596,49 @@ class _VaultAccessDeniedScreen extends StatelessWidget {
                   ),
                 ],
               ],
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
+              InkWell(
+                onTap: () => launchUrl(
+                  Uri.parse('https://github.com/sangeeth2008'),
+                  mode: LaunchMode.externalApplication,
+                ),
+                borderRadius: BorderRadius.circular(99),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.code_rounded, size: 13, color: luxe.cyan),
+                      const SizedBox(width: 5),
+                      Text(
+                        'Built by Sangeeth Sasikumar K S',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: luxe.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '• @sangeeth2008',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w500,
+                          color: luxe.cyan,
+                        ),
+                      ),
+                      const SizedBox(width: 3),
+                      Icon(
+                        Icons.open_in_new_rounded,
+                        size: 11,
+                        color: luxe.cyan,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
             ],
           ),
         ),
@@ -548,7 +661,7 @@ class _VaultWelcomeScreenState extends ConsumerState<VaultWelcomeScreen> {
   @override
   void initState() {
     super.initState();
-    _autoDismissTimer = Timer(const Duration(milliseconds: 2200), () {
+    _autoDismissTimer = Timer(const Duration(milliseconds: 1200), () {
       if (mounted) {
         ref.read(lockControllerProvider.notifier).dismissWelcomeScreen();
       }
@@ -673,7 +786,40 @@ class _VaultWelcomeScreenState extends ConsumerState<VaultWelcomeScreen> {
                       .dismissWelcomeScreen();
                 },
               ).animate().fadeIn(delay: 240.ms),
-              const SizedBox(height: 12),
+              const SizedBox(height: 10),
+              InkWell(
+                onTap: () => launchUrl(
+                  Uri.parse('https://github.com/sangeeth2008'),
+                  mode: LaunchMode.externalApplication,
+                ),
+                borderRadius: BorderRadius.circular(99),
+                child: Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.code_rounded, size: 13, color: luxe.cyan),
+                      const SizedBox(width: 5),
+                      Text(
+                        'Architected by Sangeeth Sasikumar K S • @sangeeth2008',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: luxe.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Icon(
+                        Icons.open_in_new_rounded,
+                        size: 11,
+                        color: luxe.cyan,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
             ],
           ),
         ),
