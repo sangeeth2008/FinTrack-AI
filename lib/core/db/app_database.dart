@@ -433,44 +433,103 @@ class AppDatabase {
     };
   }
 
-  Future<void> restoreSnapshot(Map<String, dynamic> snapshot) async {
+  Future<Map<String, int>> restoreSnapshot(Map<String, dynamic> snapshot) async {
+    int accountsCount = 0;
+    int categoriesCount = 0;
+    int txnCount = 0;
+    int splitsCount = 0;
+    int impulseCount = 0;
+
     await _db.transaction((txn) async {
-      for (final row in (snapshot['accounts'] as List? ?? const [])) {
+      // 1. Ensure core default accounts & categories exist
+      for (final acc in defaultAccounts) {
         await txn.insert(
           'accounts',
-          Map<String, Object?>.from(row as Map),
-          conflictAlgorithm: sqlcipher.ConflictAlgorithm.replace,
+          acc.toMap(),
+          conflictAlgorithm: sqlcipher.ConflictAlgorithm.ignore,
         );
       }
-      for (final row in (snapshot['categories'] as List? ?? const [])) {
+      for (final cat in defaultCategories) {
         await txn.insert(
           'categories',
-          Map<String, Object?>.from(row as Map),
-          conflictAlgorithm: sqlcipher.ConflictAlgorithm.replace,
+          cat.toMap(),
+          conflictAlgorithm: sqlcipher.ConflictAlgorithm.ignore,
         );
       }
+
+      // 2. Insert snapshot accounts
+      for (final row in (snapshot['accounts'] as List? ?? const [])) {
+        if (row is! Map) continue;
+        try {
+          await txn.insert(
+            'accounts',
+            Map<String, Object?>.from(row),
+            conflictAlgorithm: sqlcipher.ConflictAlgorithm.replace,
+          );
+          accountsCount++;
+        } catch (_) {}
+      }
+
+      // 3. Insert snapshot categories
+      for (final row in (snapshot['categories'] as List? ?? const [])) {
+        if (row is! Map) continue;
+        try {
+          await txn.insert(
+            'categories',
+            Map<String, Object?>.from(row),
+            conflictAlgorithm: sqlcipher.ConflictAlgorithm.replace,
+          );
+          categoriesCount++;
+        } catch (_) {}
+      }
+
+      // 4. Insert snapshot transactions
       for (final row in (snapshot['transactions'] as List? ?? const [])) {
-        await txn.insert(
-          'transactions',
-          Map<String, Object?>.from(row as Map),
-          conflictAlgorithm: sqlcipher.ConflictAlgorithm.replace,
-        );
+        if (row is! Map) continue;
+        try {
+          await txn.insert(
+            'transactions',
+            Map<String, Object?>.from(row),
+            conflictAlgorithm: sqlcipher.ConflictAlgorithm.replace,
+          );
+          txnCount++;
+        } catch (_) {}
       }
+
+      // 5. Insert split shares
       for (final row in (snapshot['split_shares'] as List? ?? const [])) {
-        await txn.insert(
-          'split_shares',
-          Map<String, Object?>.from(row as Map),
-          conflictAlgorithm: sqlcipher.ConflictAlgorithm.replace,
-        );
+        if (row is! Map) continue;
+        try {
+          await txn.insert(
+            'split_shares',
+            Map<String, Object?>.from(row),
+            conflictAlgorithm: sqlcipher.ConflictAlgorithm.replace,
+          );
+          splitsCount++;
+        } catch (_) {}
       }
+
+      // 6. Insert impulse items
       for (final row in (snapshot['impulse_items'] as List? ?? const [])) {
-        await txn.insert(
-          'impulse_items',
-          Map<String, Object?>.from(row as Map),
-          conflictAlgorithm: sqlcipher.ConflictAlgorithm.replace,
-        );
+        if (row is! Map) continue;
+        try {
+          await txn.insert(
+            'impulse_items',
+            Map<String, Object?>.from(row),
+            conflictAlgorithm: sqlcipher.ConflictAlgorithm.replace,
+          );
+          impulseCount++;
+        } catch (_) {}
       }
     });
+
+    return {
+      'accounts': accountsCount,
+      'categories': categoriesCount,
+      'transactions': txnCount,
+      'split_shares': splitsCount,
+      'impulse_items': impulseCount,
+    };
   }
 
   Future<void> close() => _db.close();

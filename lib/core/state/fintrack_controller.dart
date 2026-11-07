@@ -1090,29 +1090,56 @@ class FinTrackController extends Notifier<FinTrackState> {
     return imported;
   }
 
-  Future<String> exportEncryptedBackup(String passphrase) async {
+  Future<String> exportEncryptedBackup(String passphrase) =>
+      exportBackupData(passphrase: passphrase);
+
+  /// Exports vault database data either encrypted with [passphrase] (if provided)
+  /// or as clean, standard JSON.
+  Future<String> exportBackupData({String? passphrase}) async {
     final db = _db;
     if (db == null) throw StateError('Database not ready');
     final snapshot = await db.exportSnapshot();
-    return ref
-        .read(encryptedBackupServiceProvider)
-        .encryptSnapshotToJson(snapshot: snapshot, passphrase: passphrase);
+    if (passphrase != null && passphrase.trim().isNotEmpty) {
+      return ref
+          .read(encryptedBackupServiceProvider)
+          .encryptSnapshotToJson(
+            snapshot: snapshot,
+            passphrase: passphrase.trim(),
+          );
+    }
+    return const JsonEncoder.withIndent('  ').convert(snapshot);
+  }
+
+  /// Restores vault data from ANY backup format:
+  /// 1. AES-256-GCM Encrypted FinTrack Backup (`.ftbackup` / `.json`)
+  /// 2. Unencrypted standard FinTrack JSON snapshot
+  /// 3. Plain transaction list array or object from exports
+  Future<Map<String, int>> restoreBackupData({
+    required String rawJsonOrContent,
+    String? passphrase,
+  }) async {
+    final db = _db;
+    if (db == null) throw StateError('Vault database is not initialized');
+
+    final backupService = ref.read(encryptedBackupServiceProvider);
+    final snapshot = await backupService.parseOrDecrypt(
+      rawJson: rawJsonOrContent,
+      passphrase: passphrase,
+    );
+
+    final counts = await db.restoreSnapshot(snapshot);
+    await _reloadFromDb(refreshAiTip: true);
+    return counts;
   }
 
   Future<void> restoreEncryptedBackup({
     required String encryptedJson,
     required String passphrase,
   }) async {
-    final db = _db;
-    if (db == null) throw StateError('Database not ready');
-    final snapshot = await ref
-        .read(encryptedBackupServiceProvider)
-        .decryptJsonToSnapshot(
-          encryptedEnvelopeJson: encryptedJson,
-          passphrase: passphrase,
-        );
-    await db.restoreSnapshot(snapshot);
-    await _reloadFromDb(refreshAiTip: true);
+    await restoreBackupData(
+      rawJsonOrContent: encryptedJson,
+      passphrase: passphrase,
+    );
   }
 }
 

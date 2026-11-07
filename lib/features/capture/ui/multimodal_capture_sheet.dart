@@ -17,6 +17,7 @@ import '../../../core/state/fintrack_controller.dart';
 import '../../../shared/widgets/animated_amount.dart';
 import '../../../shared/widgets/glass_card.dart';
 import '../../../shared/widgets/gradient_button.dart';
+import '../../backup/domain/encrypted_backup_service.dart';
 import '../../splits/domain/split_calculator.dart';
 import '../domain/csv_statement_parser.dart';
 import '../domain/sms_regex_parser.dart';
@@ -467,7 +468,7 @@ class _MultimodalCaptureSheetState
     try {
       final files = await FilePicker.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['csv', 'pdf', 'txt'],
+        allowedExtensions: ['csv', 'pdf', 'txt', 'json'],
       );
       if (files.isEmpty) return;
       final file = files.first;
@@ -481,7 +482,49 @@ class _MultimodalCaptureSheetState
         return;
       }
 
-      if (ext == 'csv' || ext == 'txt') {
+      if (ext == 'json') {
+        final content = utf8.decode(bytes, allowMalformed: true);
+        try {
+          final decoded = jsonDecode(content);
+          final backupService = EncryptedBackupService();
+          final snapshot = backupService.normalizeRawJsonSnapshot(decoded);
+          final rawTxns = snapshot['transactions'] as List? ?? [];
+          final drafts = <ParsedTransactionDraft>[];
+
+          for (final t in rawTxns) {
+            if (t is! Map) continue;
+            final m = Map<String, dynamic>.from(t);
+            final amt = (m['amount_paise'] as num? ?? 0).toInt();
+            if (amt <= 0) continue;
+
+            drafts.add(
+              ParsedTransactionDraft(
+                title: (m['title'] ?? 'Transaction').toString(),
+                amountPaise: amt,
+                type: (m['type'] == 'credit') ? TxnType.credit : TxnType.debit,
+                categoryId: (m['category_id'] ?? 'cat_other').toString(),
+                accountId: (m['account_id'] ?? AccountModel.primaryAccountId).toString(),
+                occurredAt: DateTime.fromMillisecondsSinceEpoch(
+                  (m['occurred_at_ms'] as num? ?? DateTime.now().millisecondsSinceEpoch).toInt(),
+                ),
+                paymentMode: PaymentMode.fromString((m['payment_mode'] ?? 'upi').toString()),
+                counterparty: (m['counterparty'] ?? '').toString(),
+                referenceId: m['reference_id']?.toString(),
+                source: TxnSource.manual,
+              ),
+            );
+          }
+
+          if (drafts.isNotEmpty) {
+            setState(() {
+              _parsedDrafts = drafts;
+              _errorMessage = null;
+              _statusMessage = 'Extracted ${drafts.length} transactions from JSON file!';
+            });
+            return;
+          }
+        } catch (_) {}
+      } else if (ext == 'csv' || ext == 'txt') {
         final content = utf8.decode(bytes, allowMalformed: true);
         final csvDrafts = CsvStatementParser.parseCsvContent(content);
         if (csvDrafts.isNotEmpty) {

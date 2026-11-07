@@ -400,6 +400,65 @@ Date,Narration,Withdrawal,Deposit,Ref No
         throwsA(anything),
       );
     });
+
+    test('parseOrDecrypt handles both plain JSON files and encrypted backups seamlessly', () async {
+      final service = EncryptedBackupService();
+
+      // 1. Plain JSON snapshot without passphrase
+      const plainJson = '''
+      {
+        "transactions": [
+          {
+            "title": "College Cafeteria",
+            "amount": 85.50,
+            "category": "Food",
+            "date": "2026-11-01T13:00:00Z"
+          }
+        ]
+      }
+      ''';
+      final plainSnapshot = await service.parseOrDecrypt(rawJson: plainJson);
+      expect(plainSnapshot['transactions'], isNotEmpty);
+      final t1 = (plainSnapshot['transactions'] as List).first as Map<String, dynamic>;
+      expect(t1['amount_paise'], 8550); // ₹85.50 converted to 8550 paise
+      expect(t1['category_id'], 'cat_food');
+      expect(t1['type'], 'debit');
+
+      // 2. Direct JSON Array of transactions without passphrase
+      const arrayJson = '''
+      [
+        {
+          "title": "Salary Stipend",
+          "amount": 12000,
+          "type": "credit",
+          "category": "Income"
+        }
+      ]
+      ''';
+      final arraySnapshot = await service.parseOrDecrypt(rawJson: arrayJson);
+      expect(arraySnapshot['transactions'], isNotEmpty);
+      final t2 = (arraySnapshot['transactions'] as List).first as Map<String, dynamic>;
+      expect(t2['amount_paise'], 1200000);
+      expect(t2['type'], 'credit');
+      expect(t2['category_id'], 'cat_income_salary');
+
+      // 3. Encrypted backup throws PassphraseRequiredException when passphrase is empty
+      final encrypted = await service.encryptSnapshotToJson(
+        snapshot: {'schema_version': 1, 'transactions': []},
+        passphrase: 'secure-vault-pass',
+      );
+      expect(
+        () => service.parseOrDecrypt(rawJson: encrypted, passphrase: ''),
+        throwsA(isA<PassphraseRequiredException>()),
+      );
+
+      // 4. Encrypted backup decrypts cleanly when passphrase is provided
+      final decrypted = await service.parseOrDecrypt(
+        rawJson: encrypted,
+        passphrase: 'secure-vault-pass',
+      );
+      expect(decrypted['schema_version'], 1);
+    });
   });
 
   testWidgets('Vault Lock onboarding renders and unlocks into FinTrack AI', (

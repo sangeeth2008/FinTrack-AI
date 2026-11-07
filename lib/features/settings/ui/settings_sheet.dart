@@ -1,8 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../app/motion/motion.dart';
@@ -12,6 +15,7 @@ import '../../../core/security/lock_controller.dart';
 import '../../../core/state/fintrack_controller.dart';
 import '../../../shared/widgets/glass_card.dart';
 import '../../../shared/widgets/gradient_button.dart';
+import '../../backup/domain/encrypted_backup_service.dart';
 import '../../profile/ui/profile_qr_sheet.dart';
 
 class SettingsSheet extends ConsumerStatefulWidget {
@@ -95,61 +99,237 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
     }
   }
 
-  Future<void> _exportEncryptedBackup() async {
-    final pass = _backupPassCtrl.text.trim();
-    if (pass.length < 4) {
-      setState(
-        () => _feedbackMessage =
-            'Enter a backup passphrase (min 4 chars) to encrypt.',
-      );
-      return;
-    }
-    try {
-      final encryptedJson = await ref
-          .read(finTrackControllerProvider.notifier)
-          .exportEncryptedBackup(pass);
-      await Clipboard.setData(ClipboardData(text: encryptedJson));
-      await SharePlus.instance.share(
-        ShareParams(
-          text: encryptedJson,
-          subject: 'FinTrack_AI_Encrypted_Backup.ftbackup',
-        ),
-      );
-      if (mounted) {
-        setState(
-          () => _feedbackMessage =
-              'AES-256-GCM Encrypted Backup copied & ready to save!',
+  Future<String?> _promptPassphraseDialog(
+    BuildContext context, {
+    required String title,
+    required String hint,
+  }) async {
+    final passCtrl = TextEditingController(text: _backupPassCtrl.text.trim());
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        final luxe = ctx.luxe;
+        return AlertDialog(
+          backgroundColor: luxe.bgElevated,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: BorderSide(color: luxe.borderHighlight),
+          ),
+          title: Row(
+            children: [
+              Icon(Icons.lock_rounded, color: luxe.emerald, size: 22),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                hint,
+                style: TextStyle(color: luxe.textSecondary, fontSize: 12.5),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: passCtrl,
+                obscureText: true,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Backup Passphrase',
+                  hintText: 'Enter encryption password',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(null),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final val = passCtrl.text.trim();
+                _backupPassCtrl.text = val;
+                Navigator.of(ctx).pop(val);
+              },
+              child: const Text('Decrypt & Restore'),
+            ),
+          ],
         );
+      },
+    );
+  }
+
+  Future<void> _pickAndRestoreBackupFile() async {
+    try {
+      final files = await FilePicker.pickFiles(type: FileType.any);
+      if (files.isEmpty || files.first.path == null) return;
+
+      final file = File(files.first.path!);
+      if (!await file.exists()) {
+        setState(() => _feedbackMessage = 'Selected backup file does not exist.');
+        return;
+      }
+
+      final bytes = await file.readAsBytes();
+      final content = utf8.decode(bytes, allowMalformed: true);
+      if (content.trim().isEmpty) {
+        setState(() => _feedbackMessage = 'Selected backup file is empty.');
+        return;
+      }
+
+      final backupService = EncryptedBackupService();
+      final isEncrypted = backupService.isEncryptedEnvelope(content);
+      String? pass = _backupPassCtrl.text.trim();
+
+      if (isEncrypted && pass.isEmpty) {
+        if (!mounted) return;
+        pass = await _promptPassphraseDialog(
+          context,
+          title: 'Encrypted Backup Detected',
+          hint: 'This file is sealed with AES-256-GCM. Enter your passphrase to decrypt and restore.',
+        );
+        if (pass == null || pass.trim().isEmpty) {
+          setState(
+            () => _feedbackMessage =
+                'Restore cancelled: passphrase required for encrypted file.',
+          );
+          return;
+        }
+      }
+
+      setState(() => _feedbackMessage = 'Restoring vault from backup file...');
+
+      final counts = await ref
+          .read(finTrackControllerProvider.notifier)
+          .restoreBackupData(
+            rawJsonOrContent: content,
+            passphrase: pass,
+          );
+
+      LuxeHaptics.medium();
+      if (mounted) {
+        setState(() {
+          final txns = counts['transactions'] ?? 0;
+          final accs = counts['accounts'] ?? 0;
+          _feedbackMessage =
+              'Success! Restored $txns transactions & $accs accounts into your vault.';
+        });
       }
     } catch (e) {
-      setState(() => _feedbackMessage = 'Backup error: $e');
+      if (mounted) {
+        setState(() => _feedbackMessage = 'Failed to restore file: $e');
+      }
     }
   }
 
-  Future<void> _restoreEncryptedBackup() async {
-    final pass = _backupPassCtrl.text.trim();
+  Future<void> _restoreFromPastedText() async {
     final payload = _restoreJsonCtrl.text.trim();
-    if (pass.isEmpty || payload.isEmpty) {
+    if (payload.isEmpty) {
       setState(
         () => _feedbackMessage =
-            'Provide both the passphrase and the encrypted backup JSON.',
+            'Please paste your backup JSON, or use the "Upload Backup File" button above.',
       );
       return;
     }
+
     try {
-      await ref
+      final backupService = EncryptedBackupService();
+      final isEncrypted = backupService.isEncryptedEnvelope(payload);
+      var pass = _backupPassCtrl.text.trim();
+
+      if (isEncrypted && pass.isEmpty) {
+        if (!mounted) return;
+        pass = await _promptPassphraseDialog(
+          context,
+          title: 'Encrypted Backup Detected',
+          hint: 'Enter your encryption passphrase to decrypt the pasted JSON.',
+        ) ?? '';
+        if (pass.isEmpty) {
+          setState(
+            () => _feedbackMessage =
+                'Passphrase required for encrypted backup.',
+          );
+          return;
+        }
+      }
+
+      setState(() => _feedbackMessage = 'Restoring data into vault...');
+
+      final counts = await ref
           .read(finTrackControllerProvider.notifier)
-          .restoreEncryptedBackup(encryptedJson: payload, passphrase: pass);
+          .restoreBackupData(
+            rawJsonOrContent: payload,
+            passphrase: pass.isEmpty ? null : pass,
+          );
+
+      LuxeHaptics.medium();
+      if (mounted) {
+        setState(() {
+          final txns = counts['transactions'] ?? 0;
+          final accs = counts['accounts'] ?? 0;
+          _feedbackMessage =
+              'Success! Restored $txns transactions & $accs accounts into your vault.';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _feedbackMessage = 'Restore failed: $e');
+      }
+    }
+  }
+
+  Future<void> _exportBackupFile({bool encrypt = false}) async {
+    final pass = _backupPassCtrl.text.trim();
+    if (encrypt && pass.length < 4) {
+      setState(
+        () => _feedbackMessage =
+            'Set an encryption passphrase (minimum 4 characters) before exporting encrypted backup.',
+      );
+      return;
+    }
+
+    try {
+      final payload = await ref
+          .read(finTrackControllerProvider.notifier)
+          .exportBackupData(passphrase: encrypt ? pass : null);
+
+      final tempDir = await getTemporaryDirectory();
+      final dateStr = DateTime.now()
+          .toIso8601String()
+          .replaceAll(RegExp(r'[^0-9]'), '_');
+      final fileName = encrypt
+          ? 'FinTrack_Encrypted_Backup_$dateStr.ftbackup'
+          : 'FinTrack_Data_Backup_$dateStr.json';
+      final file = File(p.join(tempDir.path, fileName));
+      await file.writeAsString(payload);
+
+      await Clipboard.setData(ClipboardData(text: payload));
+
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path)],
+          subject: fileName,
+          title: 'FinTrack AI Data Backup',
+          text: 'FinTrack AI Backup ($fileName)',
+        ),
+      );
+
+      LuxeHaptics.medium();
       if (mounted) {
         setState(
           () => _feedbackMessage =
-              'Encrypted backup decrypted & restored into vault!',
+              'Backup saved to $fileName and ready to save / share! (Also copied to clipboard)',
         );
       }
     } catch (e) {
-      setState(
-        () => _feedbackMessage = 'Restore failed (check passphrase): $e',
-      );
+      setState(() => _feedbackMessage = 'Export error: $e');
     }
   }
 
@@ -752,19 +932,62 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
             const SizedBox(height: 22),
             GlassCard(
               padding: const EdgeInsets.all(16),
+              borderColor: luxe.emerald.withValues(alpha: 0.35),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    'AES-256-GCM ENCRYPTED LOCAL BACKUP',
-                    style: Theme.of(context).textTheme.labelSmall,
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.backup_rounded,
+                        color: luxe.emerald,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'VAULT BACKUP & JSON RESTORE',
+                          style: Theme.of(context).textTheme.labelSmall,
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Upload your financial JSON file or encrypted backup to restore your data immediately. Supports both standard JSON and AES-256-GCM encrypted files.',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontSize: 12,
+                          color: luxe.textSecondary,
+                        ),
+                  ),
+                  const SizedBox(height: 14),
+                  // Primary 1-tap File Upload & Restore Button
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: luxe.emerald,
+                      foregroundColor: const Color(0xFF041510),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    onPressed: _pickAndRestoreBackupFile,
+                    icon: const Icon(Icons.file_upload_rounded, size: 20),
+                    label: const Text(
+                      'Upload & Restore JSON File',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
                   TextField(
                     controller: _backupPassCtrl,
                     obscureText: true,
                     decoration: const InputDecoration(
-                      labelText: 'Backup Encryption Passphrase',
+                      labelText: 'Encryption Passphrase (Optional for plain JSON)',
+                      hintText: 'Only needed if your backup is encrypted',
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -772,25 +995,54 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
                     controller: _restoreJsonCtrl,
                     maxLines: 2,
                     decoration: const InputDecoration(
-                      labelText: 'Paste Encrypted Backup JSON (for Restore)',
+                      labelText: 'Or Paste JSON Content directly',
+                      hintText: 'Paste {"transactions": [...]} or encrypted JSON',
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: _restoreFromPastedText,
+                    icon: Icon(
+                      Icons.content_paste_go_rounded,
+                      size: 18,
+                      color: luxe.emerald,
+                    ),
+                    label: const Text('Restore from Pasted JSON'),
+                  ),
+                  const Divider(height: 24),
+                  Text(
+                    'EXPORT YOUR DATA',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: luxe.textMuted,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
                   Row(
                     children: [
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: _exportEncryptedBackup,
-                          icon: const Icon(Icons.upload_outlined, size: 18),
-                          label: const Text('Export Backup'),
+                          onPressed: () => _exportBackupFile(encrypt: true),
+                          icon: Icon(
+                            Icons.lock_rounded,
+                            size: 16,
+                            color: luxe.gold,
+                          ),
+                          label: const Text('Export Encrypted'),
                         ),
                       ),
                       const SizedBox(width: 10),
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: _restoreEncryptedBackup,
-                          icon: const Icon(Icons.download_outlined, size: 18),
-                          label: const Text('Restore Backup'),
+                          onPressed: () => _exportBackupFile(encrypt: false),
+                          icon: Icon(
+                            Icons.code_rounded,
+                            size: 16,
+                            color: luxe.cyan,
+                          ),
+                          label: const Text('Export Plain JSON'),
                         ),
                       ),
                     ],

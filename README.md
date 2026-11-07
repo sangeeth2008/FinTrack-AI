@@ -80,6 +80,12 @@ Every byte of financial telemetry is sealed inside a **256-bit AES SQLCipher dat
 - **Smart Bill Splitter:** Distributes amounts evenly among peers with automatic remainder paise reconciliation.
 - **Dynamic UPI QR Code Generator:** Generates custom payment QR codes directly inside your profile and split-bill sheets to receive payments effortlessly.
 
+### 💾 Universal JSON File Upload, Backup & Restore
+- **1-Tap File Picker Upload:** Directly select and upload any `.json` or `.ftbackup` file from device storage, Google Drive, or Downloads.
+- **Dual Support (Plain JSON & Encrypted):** Automatically detects whether your file is plain JSON or encrypted with AES-256-GCM. Plain JSON files restore immediately with zero passphrase required; encrypted files prompt for their passphrase.
+- **Flexible Schema Normalization:** Intelligently maps varying field formats (`amount` in rupees vs paise, snake_case vs camelCase, ISO dates vs timestamps, categories, accounts and payment modes).
+- **Dual Export:** Export either encrypted `.ftbackup` or readable `.json` with 1-tap share/save directly to your files or clipboard.
+
 ---
 
 ## 🏛️ System Architecture
@@ -209,7 +215,7 @@ flutter pub get
 flutter analyze
 flutter test
 ```
-*All 11 test suites verify PBKDF2 cryptography, constant-time compare, 3-attempt lockouts, bank SMS parsers, CSV statement imports, bill splits, AES backup encryption, dedicated wallet debit isolation, wallet top-up transfers, and offline Gemma 2 NLP parsing.*
+*All 12 test suites verify PBKDF2 cryptography, constant-time compare, 3-attempt lockouts, bank SMS parsers, CSV statement imports, bill splits, AES backup encryption, universal JSON restoration, dedicated wallet debit isolation, wallet top-up transfers, and offline Gemma 2 NLP parsing.*
 
 ### 4. Build Production Release APK
 ```bash
