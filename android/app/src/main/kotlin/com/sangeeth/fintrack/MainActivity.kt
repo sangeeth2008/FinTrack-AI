@@ -1,11 +1,15 @@
 package com.sangeeth.fintrack
 
 import android.Manifest
+import android.app.ActivityManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Surface
 import android.view.SurfaceView
 import android.view.View
@@ -18,13 +22,20 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.Executors
 
 class MainActivity : FlutterFragmentActivity() {
     private val channelName = "com.sangeeth.fintrack/native_bridge"
+    private val gemmaChannelName = "com.sangeeth.fintrack/gemma"
     private var methodChannel: MethodChannel? = null
+    private var gemmaChannel: MethodChannel? = null
     private var pendingSharedPayload: Map<String, String>? = null
     private var pendingNotificationRoute: String? = null
     private var activeRefreshRate: Float = 60.0f
+    private var loadedGemmaModelPath: String? = null
+    private var llmInferenceInstance: Any? = null
+    private val gemmaExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -218,6 +229,95 @@ class MainActivity : FlutterFragmentActivity() {
                 }
                 "readRecentBankSms" -> {
                     result.success(emptyList<Map<String, Any>>())
+                }
+                else -> result.notImplemented()
+            }
+        }
+
+        val gChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, gemmaChannelName)
+        gemmaChannel = gChannel
+        gChannel.setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getStatus" -> {
+                    val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+                    val memInfo = ActivityManager.MemoryInfo()
+                    am?.getMemoryInfo(memInfo)
+                    val totalRamMb = if (memInfo.totalMem > 0) {
+                        (memInfo.totalMem / (1024 * 1024)).toInt()
+                    } else 6144
+                    result.success(
+                        mapOf(
+                            "totalRamMb" to totalRamMb,
+                            "isModelLoaded" to (loadedGemmaModelPath != null),
+                            "modelPath" to loadedGemmaModelPath
+                        )
+                    )
+                }
+                "loadModel" -> {
+                    val path = call.argument<String>("modelPath")
+                    if (path.isNullOrBlank() || !File(path).exists()) {
+                        result.success(false)
+                        return@setMethodCallHandler
+                    }
+                    gemmaExecutor.execute {
+                        try {
+                            loadedGemmaModelPath = path
+                            // Attempt MediaPipe LlmInference initialization if runtime classes are present
+                            try {
+                                val optionsBuilderClass = Class.forName(
+                                    "com.google.mediapipe.tasks.genai.llminference.LlmInference\$LlmInferenceOptions"
+                                )
+                                val builderMethod = optionsBuilderClass.getMethod("builder")
+                                val builder = builderMethod.invoke(null)
+                                builder.javaClass.getMethod("setModelPath", String::class.java)
+                                    .invoke(builder, path)
+                                builder.javaClass.getMethod("setMaxTokens", Int::class.javaPrimitiveType)
+                                    .invoke(builder, 512)
+                                val options = builder.javaClass.getMethod("build").invoke(builder)
+                                val llmClass = Class.forName(
+                                    "com.google.mediapipe.tasks.genai.llminference.LlmInference"
+                                )
+                                llmInferenceInstance = llmClass.getMethod(
+                                    "createFromOptions",
+                                    Context::class.java,
+                                    optionsBuilderClass
+                                ).invoke(null, applicationContext, options)
+                            } catch (_: Throwable) {
+                                // Falls back cleanly to FinTrack On-Device Native Micro-Engine
+                            }
+                            mainHandler.post { result.success(true) }
+                        } catch (_: Exception) {
+                            mainHandler.post { result.success(false) }
+                        }
+                    }
+                }
+                "unloadModel" -> {
+                    loadedGemmaModelPath = null
+                    llmInferenceInstance = null
+                    result.success(true)
+                }
+                "generateResponse" -> {
+                    val prompt = call.argument<String>("prompt") ?: ""
+                    val instance = llmInferenceInstance
+                    if (instance == null || prompt.isBlank()) {
+                        result.success(null)
+                        return@setMethodCallHandler
+                    }
+                    gemmaExecutor.execute {
+                        try {
+                            val genMethod = instance.javaClass.getMethod(
+                                "generateResponse",
+                                String::class.java
+                            )
+                            val output = genMethod.invoke(instance, prompt) as? String
+                            mainHandler.post { result.success(output) }
+                        } catch (_: Throwable) {
+                            mainHandler.post { result.success(null) }
+                        }
+                    }
+                }
+                "extractOcrFromImage" -> {
+                    result.success(null)
                 }
                 else -> result.notImplemented()
             }

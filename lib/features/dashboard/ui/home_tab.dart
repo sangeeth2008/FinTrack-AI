@@ -92,9 +92,11 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                     Row(
                       children: [
                         Text(
-                          state.isTipAiGenerated
-                              ? 'GEMINI 3.8 FLASH BRIEFING'
-                              : 'SMART DAILY BRIEFING',
+                          state.isLocalGemmaActive
+                              ? 'GEMMA 2 ON-DEVICE BRIEFING'
+                              : (state.isTipAiGenerated
+                                    ? 'GEMINI CLOUD BRIEFING'
+                                    : 'SMART DAILY BRIEFING'),
                           style: Theme.of(context).textTheme.labelSmall
                               ?.copyWith(color: luxe.cyan),
                         ),
@@ -117,7 +119,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
 
         const SizedBox(height: 16),
 
-        // 2. Total Net Balance & Monthly Credited vs Spent Hero Card
+        // 2. Total Net Balance, Main Bank vs Dedicated Wallet & Monthly Cashflow Hero Card
         GlassCard(
           padding: const EdgeInsets.all(22),
           borderColor: luxe.borderHighlight,
@@ -129,7 +131,7 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'TOTAL AVAILABLE BALANCE',
+                    'MAIN BANK ACCOUNT BALANCE',
                     style: Theme.of(context).textTheme.labelSmall,
                   ),
                   GestureDetector(
@@ -172,10 +174,89 @@ class _HomeTabState extends ConsumerState<HomeTab> {
               ),
               const SizedBox(height: 8),
               AnimatedAmount(
-                paise: cashflow.totalBalancePaise,
+                paise: cashflow.mainAccountBalancePaise,
                 style: Theme.of(context).textTheme.displayLarge,
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 14),
+              // Dedicated Wallet Balance Card (Separate from Main Bank Account)
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      luxe.gold.withValues(alpha: 0.16),
+                      luxe.bgElevated.withValues(alpha: 0.75),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: luxe.gold.withValues(alpha: 0.45)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: luxe.gold.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Icon(
+                        Icons.account_balance_wallet_rounded,
+                        color: luxe.gold,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'DEDICATED WALLET BALANCE',
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(color: luxe.gold, fontSize: 10),
+                          ),
+                          const SizedBox(height: 2),
+                          AnimatedAmount(
+                            paise: cashflow.walletBalancePaise,
+                            style: Theme.of(context).textTheme.titleLarge
+                                ?.copyWith(color: luxe.textPrimary),
+                          ),
+                          Text(
+                            'Wallet Spent (Mo): ₹${(cashflow.walletSpentMonthPaise / 100).toStringAsFixed(0)} • Debits Wallet Only',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              color: luxe.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.tonalIcon(
+                      onPressed: () =>
+                          _showWalletTopUpDialog(context, ref, state),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: luxe.gold.withValues(alpha: 0.22),
+                        foregroundColor: luxe.gold,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                      ),
+                      icon: const Icon(Icons.add_rounded, size: 16),
+                      label: const Text(
+                        'Top Up',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
               Row(
                 children: [
                   Expanded(
@@ -212,17 +293,13 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      'Net Monthly Cashflow',
+                      'Total Liquid (Bank + Wallet)',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     Row(
                       children: [
                         AnimatedAmount(
-                          paise: cashflow.netMonthlyCashflowPaise,
-                          showSign: true,
-                          tone: cashflow.netMonthlyCashflowPaise >= 0
-                              ? AmountTone.credit
-                              : AmountTone.debit,
+                          paise: cashflow.totalBalancePaise,
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         if (cashflow.monthlyCreditedPaise > 0) ...[
@@ -719,17 +796,52 @@ class _HomeTabState extends ConsumerState<HomeTab> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(
-                                      txn.title,
-                                      style: Theme.of(
-                                        context,
-                                      ).textTheme.titleMedium,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
+                                    Row(
+                                      children: [
+                                        Flexible(
+                                          child: Text(
+                                            txn.title,
+                                            style: Theme.of(
+                                              context,
+                                            ).textTheme.titleMedium,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        if (txn.isWalletAccount) ...[
+                                          const SizedBox(width: 6),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 6,
+                                              vertical: 2,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: luxe.gold.withValues(
+                                                alpha: 0.16,
+                                              ),
+                                              borderRadius:
+                                                  BorderRadius.circular(6),
+                                              border: Border.all(
+                                                color: luxe.gold.withValues(
+                                                  alpha: 0.4,
+                                                ),
+                                              ),
+                                            ),
+                                            child: Text(
+                                              'WALLET',
+                                              style: TextStyle(
+                                                fontSize: 9,
+                                                fontWeight: FontWeight.w800,
+                                                color: luxe.gold,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ],
                                     ),
                                     const SizedBox(height: 3),
                                     Text(
-                                      '${cat.name} • ${txn.paymentMode.label} • $dateFormatted',
+                                      '${cat.name} • ${txn.isWalletAccount ? 'Wallet' : txn.paymentMode.label} • $dateFormatted',
                                       style: Theme.of(context)
                                           .textTheme
                                           .bodyMedium
@@ -845,22 +957,44 @@ class _HomeTabState extends ConsumerState<HomeTab> {
     WidgetRef ref,
     FinTrackState state,
   ) {
-    final primaryAcc = state.accounts.first;
-    final ctrl = TextEditingController(
+    final primaryAcc = state.primaryAccount;
+    final walletAcc = state.walletAccount;
+    final bankCtrl = TextEditingController(
       text: (primaryAcc.initialBalancePaise / 100.0).toStringAsFixed(0),
+    );
+    final walletCtrl = TextEditingController(
+      text: (walletAcc.initialBalancePaise / 100.0).toStringAsFixed(0),
     );
 
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Set Opening Bank Balance'),
-        content: TextField(
-          controller: ctrl,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(
-            prefixText: '₹ ',
-            labelText: 'Opening Balance (INR)',
-          ),
+        title: const Text('Set Opening Balances'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: bankCtrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                prefixText: '₹ ',
+                labelText: 'Main Bank Account Opening (INR)',
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: walletCtrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                prefixText: '₹ ',
+                labelText: 'Dedicated Wallet Opening (INR)',
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -868,19 +1002,110 @@ class _HomeTabState extends ConsumerState<HomeTab> {
             child: const Text('Cancel'),
           ),
           FilledButton(
-            onPressed: () {
-              final val = double.tryParse(ctrl.text.trim()) ?? 0;
-              ref
-                  .read(finTrackControllerProvider.notifier)
-                  .updateAccountInitialBalance(
-                    primaryAcc.id,
-                    (val * 100).round(),
-                  );
-              Navigator.of(ctx).pop();
+            onPressed: () async {
+              final bankVal = double.tryParse(bankCtrl.text.trim()) ?? 0;
+              final walletVal = double.tryParse(walletCtrl.text.trim()) ?? 0;
+              final notifier = ref.read(finTrackControllerProvider.notifier);
+              await notifier.updateAccountInitialBalance(
+                primaryAcc.id,
+                (bankVal * 100).round(),
+              );
+              await notifier.updateAccountInitialBalance(
+                walletAcc.id,
+                (walletVal * 100).round(),
+              );
+              if (ctx.mounted) Navigator.of(ctx).pop();
             },
             child: const Text('Save'),
           ),
         ],
+      ),
+    );
+  }
+
+  void _showWalletTopUpDialog(
+    BuildContext context,
+    WidgetRef ref,
+    FinTrackState state,
+  ) {
+    final amountCtrl = TextEditingController(text: '500');
+    bool deductFromMain = true;
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Top Up Wallet Balance'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Money spent using Wallet mode debits strictly from your Wallet balance and never from your Main Bank account.',
+                style: TextStyle(fontSize: 12.5),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: amountCtrl,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  prefixText: '₹ ',
+                  labelText: 'Wallet Top-Up Amount (INR)',
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                children: [100, 200, 500, 1000, 2000].map((amt) {
+                  return ActionChip(
+                    label: Text('+₹$amt'),
+                    onPressed: () => amountCtrl.text = amt.toString(),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 10),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text(
+                  'Transfer from Main Bank Account',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text(
+                  deductFromMain
+                      ? 'Deducts from Main Bank & adds to Wallet'
+                      : 'Adds directly to Wallet without touching Main Bank',
+                  style: const TextStyle(fontSize: 11.5),
+                ),
+                value: deductFromMain,
+                onChanged: (v) => setDialogState(() => deductFromMain = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final val = double.tryParse(amountCtrl.text.trim()) ?? 0;
+                if (val > 0) {
+                  await ref
+                      .read(finTrackControllerProvider.notifier)
+                      .topUpWallet(
+                        amountPaise: (val * 100).round(),
+                        deductFromMainAccount: deductFromMain,
+                      );
+                }
+                if (ctx.mounted) Navigator.of(ctx).pop();
+              },
+              child: const Text('Load Wallet'),
+            ),
+          ],
+        ),
       ),
     );
   }

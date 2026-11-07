@@ -9,6 +9,7 @@ import '../../features/budgets/domain/burn_rate_engine.dart';
 import '../../features/capture/domain/sms_regex_parser.dart';
 import '../../features/copilot/domain/leak_detector.dart';
 import '../../features/splits/domain/split_calculator.dart';
+import '../ai/gemma_local_service.dart';
 import '../db/app_database.dart';
 import '../db/models.dart';
 import '../gemini/gemini_service.dart';
@@ -33,6 +34,10 @@ class FinTrackState {
   final DailySummaryReport? dailySummary;
   final bool isDailySummaryLoading;
   final bool hasGeminiKey;
+  final AiEngineMode aiEngineMode;
+  final GemmaModelStatus gemmaModelStatus;
+  final bool isGemmaDownloading;
+  final double gemmaDownloadProgress;
   final int hourlyRatePaise;
   final int dailySpendLimitPaise;
   final String upiVpa;
@@ -62,6 +67,10 @@ class FinTrackState {
     this.dailySummary,
     this.isDailySummaryLoading = false,
     this.hasGeminiKey = false,
+    this.aiEngineMode = AiEngineMode.localGemma,
+    this.gemmaModelStatus = const GemmaModelStatus(),
+    this.isGemmaDownloading = false,
+    this.gemmaDownloadProgress = 0.0,
     this.hourlyRatePaise = 50000,
     this.dailySpendLimitPaise = 150000,
     this.upiVpa = '',
@@ -74,6 +83,20 @@ class FinTrackState {
     this.expenseReminderIntervalHours = 3,
     this.nightReminderEnabled = true,
   });
+
+  bool get isLocalGemmaActive => aiEngineMode == AiEngineMode.localGemma;
+
+  bool get isAiReady => isLocalGemmaActive || hasGeminiKey;
+
+  AccountModel get primaryAccount => accounts.firstWhere(
+        (a) => !a.isWallet,
+        orElse: () => AppDatabase.defaultAccounts.first,
+      );
+
+  AccountModel get walletAccount => accounts.firstWhere(
+        (a) => a.isWallet,
+        orElse: () => AppDatabase.defaultAccounts[1],
+      );
 
   factory FinTrackState.initial() {
     const emptyCashflow = CashflowAndBurnSummary(
@@ -156,6 +179,10 @@ class FinTrackState {
     DailySummaryReport? dailySummary,
     bool? isDailySummaryLoading,
     bool? hasGeminiKey,
+    AiEngineMode? aiEngineMode,
+    GemmaModelStatus? gemmaModelStatus,
+    bool? isGemmaDownloading,
+    double? gemmaDownloadProgress,
     int? hourlyRatePaise,
     int? dailySpendLimitPaise,
     String? upiVpa,
@@ -187,6 +214,11 @@ class FinTrackState {
       isDailySummaryLoading:
           isDailySummaryLoading ?? this.isDailySummaryLoading,
       hasGeminiKey: hasGeminiKey ?? this.hasGeminiKey,
+      aiEngineMode: aiEngineMode ?? this.aiEngineMode,
+      gemmaModelStatus: gemmaModelStatus ?? this.gemmaModelStatus,
+      isGemmaDownloading: isGemmaDownloading ?? this.isGemmaDownloading,
+      gemmaDownloadProgress:
+          gemmaDownloadProgress ?? this.gemmaDownloadProgress,
       hourlyRatePaise: hourlyRatePaise ?? this.hourlyRatePaise,
       dailySpendLimitPaise: dailySpendLimitPaise ?? this.dailySpendLimitPaise,
       upiVpa: upiVpa ?? this.upiVpa,
@@ -256,6 +288,15 @@ class FinTrackController extends Notifier<FinTrackState> {
       _ => ThemeMode.dark,
     };
     final apiKey = await store.getGeminiApiKey();
+    final aiMode = AiEngineMode.fromStorage(await store.getAiEngineMode());
+    final savedModelPath = await store.getLocalGemmaModelPath();
+    final gemmaService = ref.read(geminiServiceProvider).localGemma;
+    if (savedModelPath != null && savedModelPath.isNotEmpty) {
+      await gemmaService.loadModelOnDevice(savedModelPath);
+    }
+    final modelStatus = await gemmaService.getModelStatus(
+      configuredPath: savedModelPath,
+    );
     final hourlyRate = await store.getHourlyRatePaise();
     final dailyLimit = await store.getDailySpendLimitPaise();
     final upiVpa = await store.getUpiVpa();
@@ -287,6 +328,8 @@ class FinTrackController extends Notifier<FinTrackState> {
     state = state.copyWith(
       themeMode: themeMode,
       hasGeminiKey: apiKey != null && apiKey.isNotEmpty,
+      aiEngineMode: aiMode,
+      gemmaModelStatus: modelStatus,
       hourlyRatePaise: hourlyRate,
       dailySpendLimitPaise: dailyLimit,
       upiVpa: upiVpa,
@@ -373,7 +416,7 @@ class FinTrackController extends Notifier<FinTrackState> {
           : localAudit,
     );
 
-    if (refreshAiTip && state.hasGeminiKey && transactions.isNotEmpty) {
+    if (refreshAiTip && state.isAiReady && transactions.isNotEmpty) {
       _refreshDailyTipFromGemini();
     }
   }
@@ -405,19 +448,10 @@ class FinTrackController extends Notifier<FinTrackState> {
         leaks: state.leaks,
         categoryNamesById: state.categoryNamesMap,
       );
-      if (state.hasGeminiKey) {
-        final report = await ref
-            .read(geminiServiceProvider)
-            .generateMonthlyAudit(payload);
-        state = state.copyWith(auditReport: report, isAuditLoading: false);
-      } else {
-        final localReport = LeakDetector.generateLocalAuditReport(
-          cashflow: state.cashflow,
-          leaks: state.leaks,
-          categoryNamesById: state.categoryNamesMap,
-        );
-        state = state.copyWith(auditReport: localReport, isAuditLoading: false);
-      }
+      final report = await ref
+          .read(geminiServiceProvider)
+          .generateMonthlyAudit(payload);
+      state = state.copyWith(auditReport: report, isAuditLoading: false);
     } catch (_) {
       final fallback = LeakDetector.generateLocalAuditReport(
         cashflow: state.cashflow,
@@ -448,6 +482,10 @@ class FinTrackController extends Notifier<FinTrackState> {
 
     final when = occurredAt ?? DateTime.now();
     final txnId = _uuid.v4();
+    final resolvedAccountId =
+        (paymentMode == PaymentMode.wallet || paymentMode == PaymentMode.cash)
+        ? state.walletAccount.id
+        : accountId;
     final hash = TransactionModel.computeDedupeHash(
       amountPaise: amountPaise,
       type: type,
@@ -463,7 +501,7 @@ class FinTrackController extends Notifier<FinTrackState> {
       title: title.trim().isEmpty ? counterparty : title.trim(),
       counterparty: counterparty.trim().isEmpty ? title.trim() : counterparty.trim(),
       categoryId: categoryId,
-      accountId: accountId,
+      accountId: resolvedAccountId,
       occurredAt: when,
       paymentMode: paymentMode,
       referenceId: referenceId,
@@ -749,6 +787,144 @@ class FinTrackController extends Notifier<FinTrackState> {
     if (db == null) return;
     await db.updateAccountInitialBalance(accountId, initialBalancePaise);
     await _reloadFromDb();
+  }
+
+  /// Tops up the dedicated Wallet account (`acc_wallet`).
+  /// When [deductFromMainAccount] is true, debits the Main Bank account and
+  /// credits the Wallet atomically using the `wallet_transfer` tag so monthly
+  /// spend/income totals are not artificially inflated.
+  Future<void> topUpWallet({
+    required int amountPaise,
+    bool deductFromMainAccount = true,
+    String? note,
+  }) async {
+    final db = _db;
+    if (db == null || amountPaise <= 0) return;
+
+    final now = DateTime.now();
+    final primaryId = state.primaryAccount.id;
+    final walletId = state.walletAccount.id;
+    final transferRef = 'WT_${now.millisecondsSinceEpoch}';
+
+    if (deductFromMainAccount) {
+      final debitTxn = TransactionModel(
+        id: _uuid.v4(),
+        amountPaise: amountPaise,
+        type: TxnType.debit,
+        title: 'Wallet Top-Up Transfer',
+        counterparty: 'Digital & Cash Wallet',
+        categoryId: 'cat_other',
+        accountId: primaryId,
+        occurredAt: now,
+        paymentMode: PaymentMode.upi,
+        referenceId: '${transferRef}_OUT',
+        source: TxnSource.manual,
+        dedupeHash: '${transferRef}_OUT',
+        tags: const ['wallet_transfer'],
+        note: note ?? 'Transferred from Main Account to Wallet',
+      );
+      await db.upsertTransaction(debitTxn);
+    }
+
+    final creditTxn = TransactionModel(
+      id: _uuid.v4(),
+      amountPaise: amountPaise,
+      type: TxnType.credit,
+      title: deductFromMainAccount
+          ? 'Wallet Loaded from Main Bank'
+          : 'Direct Wallet Money Added',
+      counterparty: deductFromMainAccount ? 'Main Bank Account' : 'Wallet Top-Up',
+      categoryId: 'cat_income_refund',
+      accountId: walletId,
+      occurredAt: now,
+      paymentMode: PaymentMode.wallet,
+      referenceId: '${transferRef}_IN',
+      source: TxnSource.manual,
+      dedupeHash: '${transferRef}_IN',
+      tags: const ['wallet_transfer'],
+      note: note ?? 'Added to dedicated Wallet balance',
+    );
+    await db.upsertTransaction(creditTxn);
+
+    await _reloadFromDb();
+  }
+
+  Future<void> setAiEngineMode(AiEngineMode mode) async {
+    final store = ref.read(secureStoreProvider);
+    await store.setAiEngineMode(mode.storageKey);
+    final gemma = ref.read(geminiServiceProvider).localGemma;
+    final status = await gemma.getModelStatus(
+      configuredPath: await store.getLocalGemmaModelPath(),
+    );
+    state = state.copyWith(aiEngineMode: mode, gemmaModelStatus: status);
+    await _reloadFromDb(refreshAiTip: true);
+  }
+
+  Future<bool> importLocalGemmaModel(String filePath) async {
+    final store = ref.read(secureStoreProvider);
+    final gemma = ref.read(geminiServiceProvider).localGemma;
+    await store.setLocalGemmaModelPath(filePath);
+    final loaded = await gemma.loadModelOnDevice(filePath);
+    final status = await gemma.getModelStatus(configuredPath: filePath);
+    state = state.copyWith(
+      aiEngineMode: AiEngineMode.localGemma,
+      gemmaModelStatus: status,
+    );
+    return loaded;
+  }
+
+  Future<void> downloadLocalGemmaModel({String? customUrl}) async {
+    if (state.isGemmaDownloading) return;
+    final store = ref.read(secureStoreProvider);
+    final gemma = ref.read(geminiServiceProvider).localGemma;
+
+    state = state.copyWith(
+      isGemmaDownloading: true,
+      gemmaDownloadProgress: 0.01,
+    );
+
+    try {
+      final path = await gemma.downloadGemmaModel(
+        customUrl: customUrl,
+        onProgress: (ratio, _, _) {
+          state = state.copyWith(gemmaDownloadProgress: ratio);
+        },
+      );
+      await store.setLocalGemmaModelPath(path);
+      final status = await gemma.getModelStatus(configuredPath: path);
+      state = state.copyWith(
+        isGemmaDownloading: false,
+        gemmaDownloadProgress: 1.0,
+        aiEngineMode: AiEngineMode.localGemma,
+        gemmaModelStatus: status,
+      );
+    } catch (_) {
+      state = state.copyWith(
+        isGemmaDownloading: false,
+        gemmaDownloadProgress: 0.0,
+      );
+      rethrow;
+    }
+  }
+
+  void cancelGemmaDownload() {
+    ref.read(geminiServiceProvider).localGemma.cancelDownload();
+    state = state.copyWith(
+      isGemmaDownloading: false,
+      gemmaDownloadProgress: 0.0,
+    );
+  }
+
+  Future<void> deleteLocalGemmaModel() async {
+    final store = ref.read(secureStoreProvider);
+    final gemma = ref.read(geminiServiceProvider).localGemma;
+    final currentPath = await store.getLocalGemmaModelPath();
+    await gemma.deleteLocalModelFile(
+      currentPath ?? state.gemmaModelStatus.modelFilePath,
+    );
+    await store.setLocalGemmaModelPath(null);
+    final status = await gemma.getModelStatus();
+    state = state.copyWith(gemmaModelStatus: status);
   }
 
   Future<void> updatePreferences({

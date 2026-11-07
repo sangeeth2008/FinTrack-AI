@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../app/motion/motion.dart';
 import '../../../app/theme/luxe_tokens.dart';
+import '../../../core/ai/gemma_local_service.dart';
 import '../../../core/security/lock_controller.dart';
 import '../../../core/state/fintrack_controller.dart';
 import '../../../shared/widgets/glass_card.dart';
@@ -507,25 +509,176 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
             ),
             const SizedBox(height: 16),
             Text(
-              'GEMINI 3.8 FLASH API KEY (STORED IN KEYSTORE)',
+              'AI ENGINE MODE (100% ON-PHONE LOCAL DEFAULT)',
               style: Theme.of(context).textTheme.labelSmall,
             ),
             const SizedBox(height: 8),
-            TextField(
-              controller: _apiKeyCtrl,
-              obscureText: true,
-              decoration: InputDecoration(
-                hintText: state.hasGeminiKey
-                    ? '•••••••••••••••• (Key Configured — enter new to replace)'
-                    : 'Paste your Gemini API Key (AIza...)',
-                suffixIcon: Icon(
-                  state.hasGeminiKey
-                      ? Icons.verified_rounded
-                      : Icons.key_rounded,
-                  color: state.hasGeminiKey ? luxe.emerald : luxe.textMuted,
+            SegmentedButton<AiEngineMode>(
+              segments: const [
+                ButtonSegment(
+                  value: AiEngineMode.localGemma,
+                  icon: Icon(Icons.memory_rounded, size: 16),
+                  label: Text('Gemma 2 Local'),
+                ),
+                ButtonSegment(
+                  value: AiEngineMode.cloudGemini,
+                  icon: Icon(Icons.cloud_outlined, size: 16),
+                  label: Text('Cloud Gemini'),
+                ),
+              ],
+              selected: {state.aiEngineMode},
+              onSelectionChanged: (s) => ref
+                  .read(finTrackControllerProvider.notifier)
+                  .setAiEngineMode(s.first),
+            ),
+            const SizedBox(height: 12),
+            if (state.isLocalGemmaActive)
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: luxe.emerald.withValues(alpha: 0.10),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: luxe.emerald.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.shield_rounded,
+                          size: 18,
+                          color: luxe.emerald,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            state.gemmaModelStatus.activeBackendLabel,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                              color: luxe.emerald,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Runs 100% on your phone with zero cloud servers or API keys. Everyday SMS, voice, wallet routing & daily digests use the built-in 0 MB native engine so the app stays <60 MB on all phones. You can optionally load full Gemma 2 2B IT (.bin) weights below.',
+                      style: Theme.of(
+                        context,
+                      ).textTheme.bodyMedium?.copyWith(fontSize: 11.5),
+                    ),
+                    const SizedBox(height: 10),
+                    if (state.isGemmaDownloading) ...[
+                      LinearProgressIndicator(
+                        value: state.gemmaDownloadProgress,
+                        color: luxe.emerald,
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Downloading Gemma 2 2B: ${(state.gemmaDownloadProgress * 100).toStringAsFixed(0)}%',
+                            style: const TextStyle(fontSize: 11.5),
+                          ),
+                          TextButton(
+                            onPressed: () => ref
+                                .read(finTrackControllerProvider.notifier)
+                                .cancelGemmaDownload(),
+                            child: const Text('Cancel'),
+                          ),
+                        ],
+                      ),
+                    ] else
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              final files = await FilePicker.pickFiles(
+                                type: FileType.any,
+                              );
+                              if (files.isNotEmpty &&
+                                  files.first.path != null) {
+                                await ref
+                                    .read(finTrackControllerProvider.notifier)
+                                    .importLocalGemmaModel(files.first.path!);
+                                if (mounted) {
+                                  setState(
+                                    () => _feedbackMessage =
+                                        'Gemma 2 local model weights linked on-device!',
+                                  );
+                                }
+                              }
+                            },
+                            icon: const Icon(
+                              Icons.folder_open_rounded,
+                              size: 16,
+                            ),
+                            label: const Text(
+                              'Import .bin Model File',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          ),
+                          if (state.gemmaModelStatus.hasWeightsFile)
+                            OutlinedButton.icon(
+                              onPressed: () async {
+                                await ref
+                                    .read(finTrackControllerProvider.notifier)
+                                    .deleteLocalGemmaModel();
+                                if (mounted) {
+                                  setState(
+                                    () => _feedbackMessage =
+                                        'Removed Gemma 2 weights to free phone storage (0 MB Native Engine active).',
+                                  );
+                                }
+                              },
+                              icon: Icon(
+                                Icons.delete_outline_rounded,
+                                size: 16,
+                                color: luxe.crimson,
+                              ),
+                              label: Text(
+                                'Free ${state.gemmaModelStatus.formattedSize}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: luxe.crimson,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                  ],
+                ),
+              )
+            else ...[
+              Text(
+                'OPTIONAL CLOUD GEMINI API KEY (STORED IN KEYSTORE)',
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _apiKeyCtrl,
+                obscureText: true,
+                decoration: InputDecoration(
+                  hintText: state.hasGeminiKey
+                      ? '•••••••••••••••• (Key Configured — enter new to replace)'
+                      : 'Paste your Gemini API Key (AIza...)',
+                  suffixIcon: Icon(
+                    state.hasGeminiKey
+                        ? Icons.verified_rounded
+                        : Icons.key_rounded,
+                    color: state.hasGeminiKey ? luxe.emerald : luxe.textMuted,
+                  ),
                 ),
               ),
-            ),
+            ],
             const SizedBox(height: 14),
             Row(
               children: [

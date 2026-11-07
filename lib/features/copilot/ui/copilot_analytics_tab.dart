@@ -71,7 +71,9 @@ class CopilotAnalyticsTab extends ConsumerWidget {
                         borderRadius: BorderRadius.circular(99),
                       ),
                       child: Text(
-                        'GEMINI 3.8 FLASH',
+                        state.isLocalGemmaActive
+                            ? 'GEMMA 2 ON-DEVICE'
+                            : 'GEMINI CLOUD',
                         style: TextStyle(
                           fontSize: 9,
                           fontWeight: FontWeight.w700,
@@ -176,9 +178,11 @@ class CopilotAnalyticsTab extends ConsumerWidget {
               ],
               const SizedBox(height: 8),
               GradientButton(
-                label: state.hasGeminiKey
-                    ? 'Run Gemini 3.8 Flash Deep Audit'
-                    : 'Refresh Local Leak Audit (Add API Key in Settings for AI)',
+                label: state.isLocalGemmaActive
+                    ? 'Run Gemma 2 On-Device Deep Audit'
+                    : (state.hasGeminiKey
+                          ? 'Run Gemini Cloud Deep Audit'
+                          : 'Refresh Local Leak Audit'),
                 icon: Icons.psychology_outlined,
                 gradient: luxe.copilotGradient,
                 isLoading: state.isAuditLoading,

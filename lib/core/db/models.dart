@@ -12,6 +12,7 @@ enum TxnType {
 
 enum PaymentMode {
   upi('UPI'),
+  wallet('Wallet'),
   card('Card'),
   cash('Cash'),
   netBanking('NetBanking');
@@ -21,6 +22,12 @@ enum PaymentMode {
 
   static PaymentMode fromString(String? raw) {
     final s = (raw ?? '').toLowerCase();
+    if (s.contains('wallet') ||
+        s.contains('upi lite') ||
+        s.contains('paytm wallet') ||
+        s.contains('amazon pay')) {
+      return PaymentMode.wallet;
+    }
     if (s.contains('card') || s.contains('pos')) return PaymentMode.card;
     if (s.contains('cash')) return PaymentMode.cash;
     if (s.contains('net') || s.contains('neft') || s.contains('imps')) {
@@ -47,9 +54,13 @@ enum TxnSource {
 }
 
 class AccountModel {
+  static const String primaryAccountId = 'acc_upi_primary';
+  static const String walletAccountId = 'acc_wallet';
+  static const String legacyCashWalletId = 'acc_cash';
+
   final String id;
   final String name;
-  final String type; // bank | upi | cash
+  final String type; // bank | upi | wallet | cash
   final int initialBalancePaise;
   final int colorValue;
 
@@ -60,6 +71,12 @@ class AccountModel {
     required this.initialBalancePaise,
     required this.colorValue,
   });
+
+  bool get isWallet =>
+      id == walletAccountId ||
+      id == legacyCashWalletId ||
+      type == 'wallet' ||
+      type == 'cash';
 
   Map<String, Object?> toMap() => {
         'id': id,
@@ -148,6 +165,14 @@ class TransactionModel {
     this.tags = const [],
     this.note,
   });
+
+  bool get isWalletAccount =>
+      accountId == AccountModel.walletAccountId ||
+      accountId == AccountModel.legacyCashWalletId ||
+      paymentMode == PaymentMode.wallet ||
+      paymentMode == PaymentMode.cash;
+
+  bool get isInternalTransfer => tags.contains('wallet_transfer');
 
   static String computeDedupeHash({
     required int amountPaise,

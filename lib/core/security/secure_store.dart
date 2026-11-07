@@ -26,6 +26,8 @@ class SecureStore {
   static const _kAlwaysLockOnMinimize = 'ft_always_lock_on_minimize';
   static const _kAutoSmsEnabled = 'ft_auto_sms_enabled';
   static const _kLastSmsSyncMs = 'ft_last_sms_sync_ms';
+  static const _kAiEngineMode = 'ft_ai_engine_mode';
+  static const _kLocalGemmaModelPath = 'ft_local_gemma_model_path';
 
   final FlutterSecureStorage? _storage;
   final Map<String, String>? _memoryStore;
@@ -286,6 +288,29 @@ class SecureStore {
 
   Future<void> setLastSmsSyncEpochMs(int epochMs) async {
     await _write(_kLastSmsSyncMs, epochMs.toString());
+  }
+
+  /// Returns 'local_gemma' (default 100% on-device) or 'cloud_gemini'.
+  Future<String> getAiEngineMode() async {
+    return (await _read(_kAiEngineMode)) ?? 'local_gemma';
+  }
+
+  Future<void> setAiEngineMode(String mode) async {
+    await _write(_kAiEngineMode, mode);
+  }
+
+  Future<String?> getLocalGemmaModelPath() async {
+    final path = await _read(_kLocalGemmaModelPath);
+    if (path == null || path.trim().isEmpty) return null;
+    return path.trim();
+  }
+
+  Future<void> setLocalGemmaModelPath(String? path) async {
+    final trimmed = path?.trim();
+    await _write(
+      _kLocalGemmaModelPath,
+      (trimmed == null || trimmed.isEmpty) ? null : trimmed,
+    );
   }
 }
 

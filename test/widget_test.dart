@@ -1,4 +1,5 @@
 import 'package:fintrack/app/app.dart';
+import 'package:fintrack/core/ai/gemma_local_service.dart';
 import 'package:fintrack/core/db/models.dart';
 import 'package:fintrack/core/gemini/gemini_service.dart';
 import 'package:fintrack/core/security/biometric_service.dart';
@@ -258,6 +259,112 @@ Date,Narration,Withdrawal,Deposit,Ref No
       );
       expect(payload['monthly_credited_inr'], 20000.0);
       expect(payload.containsKey('transactions'), isFalse);
+    });
+
+    test('debits Wallet spend strictly from walletBalancePaise and handles Wallet Top-Up transfers cleanly', () {
+      final now = DateTime(2026, 10, 21, 14, 0);
+      const accounts = [
+        AccountModel(
+          id: AccountModel.primaryAccountId,
+          name: 'Primary UPI & Bank',
+          type: 'upi',
+          initialBalancePaise: 500000, // ₹5,000 in Main Bank
+          colorValue: 0xFF10E5A0,
+        ),
+        AccountModel(
+          id: AccountModel.walletAccountId,
+          name: 'Digital & Cash Wallet',
+          type: 'wallet',
+          initialBalancePaise: 100000, // ₹1,000 in Wallet
+          colorValue: 0xFFF5B841,
+        ),
+      ];
+
+      final txns = [
+        // 1. Wallet Top-Up: Transfer ₹500 from Main Bank -> Wallet
+        TransactionModel(
+          id: 't_topup_debit',
+          amountPaise: 50000,
+          type: TxnType.debit,
+          title: 'Wallet Top-Up (Main → Wallet)',
+          counterparty: 'Digital & Cash Wallet',
+          categoryId: 'cat_bills',
+          accountId: AccountModel.primaryAccountId,
+          occurredAt: DateTime(2026, 10, 20, 10, 0),
+          paymentMode: PaymentMode.upi,
+          source: TxnSource.manual,
+          tags: const ['wallet_transfer'],
+          dedupeHash: 'h_topup_d',
+        ),
+        TransactionModel(
+          id: 't_topup_credit',
+          amountPaise: 50000,
+          type: TxnType.credit,
+          title: 'Added to Wallet',
+          counterparty: 'Primary Bank Account',
+          categoryId: 'cat_income_salary',
+          accountId: AccountModel.walletAccountId,
+          occurredAt: DateTime(2026, 10, 20, 10, 0),
+          paymentMode: PaymentMode.wallet,
+          source: TxnSource.manual,
+          tags: const ['wallet_transfer'],
+          dedupeHash: 'h_topup_c',
+        ),
+        // 2. Spend ₹150 using Wallet money
+        TransactionModel(
+          id: 't_wallet_spend',
+          amountPaise: 15000,
+          type: TxnType.debit,
+          title: 'Canteen Snacks',
+          counterparty: 'Campus Canteen',
+          categoryId: 'cat_food',
+          accountId: AccountModel.walletAccountId,
+          occurredAt: DateTime(2026, 10, 21, 11, 0),
+          paymentMode: PaymentMode.wallet,
+          source: TxnSource.manual,
+          dedupeHash: 'h_wallet_spend',
+        ),
+      ];
+
+      final summary = BurnRateEngine.compute(
+        accounts: accounts,
+        transactions: txns,
+        monthlyBudgetPaise: 1000000,
+        nowOverride: now,
+      );
+
+      // Main Bank: ₹5,000 - ₹500 top-up = ₹4,500 (unaffected by the ₹150 wallet spend!)
+      expect(summary.mainAccountBalancePaise, 450000);
+      // Wallet: ₹1,000 + ₹500 top-up - ₹150 wallet spend = ₹1,350
+      expect(summary.walletBalancePaise, 135000);
+      // Total liquid: ₹4,500 + ₹1,350 = ₹5,850
+      expect(summary.totalBalancePaise, 585000);
+      // Monthly debited and spentToday only count real spend (₹150), NOT internal wallet transfer
+      expect(summary.monthlyDebitedPaise, 15000);
+      expect(summary.walletSpentMonthPaise, 15000);
+      expect(summary.mainSpentMonthPaise, 0);
+      expect(summary.spentTodayPaise, 15000);
+    });
+
+    test('GemmaLocalService parses offline natural language and routes wallet spend to acc_wallet', () {
+      final drafts = GemmaLocalService.parseNaturalLanguageOffline(
+        'Spent 120 on snacks from wallet with Rahul and Sravan',
+      );
+      expect(drafts, isNotEmpty);
+      final draft = drafts.first;
+      expect(draft.amountPaise, 12000);
+      expect(draft.type, TxnType.debit);
+      expect(draft.paymentMode, PaymentMode.wallet);
+      expect(draft.accountId, AccountModel.walletAccountId);
+      expect(draft.categoryId, 'cat_food');
+      expect(draft.splitFriends, containsAll(['Rahul', 'Sravan']));
+
+      final model = draft.toTransactionModel(
+        id: 'txn_test_wallet',
+        accountId: AccountModel.primaryAccountId,
+      );
+      expect(model.accountId, AccountModel.walletAccountId);
+      expect(model.paymentMode, PaymentMode.wallet);
     });
   });
 

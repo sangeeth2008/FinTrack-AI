@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
+import '../ai/gemma_local_service.dart';
 import '../db/models.dart';
 import '../security/secure_store.dart';
 
@@ -10,6 +11,7 @@ class ParsedTransactionDraft {
   final TxnType type;
   final String currency;
   final String categoryId;
+  final String? accountId;
   final DateTime occurredAt;
   final PaymentMode paymentMode;
   final String counterparty;
@@ -23,6 +25,7 @@ class ParsedTransactionDraft {
     required this.type,
     this.currency = 'INR',
     required this.categoryId,
+    this.accountId,
     required this.occurredAt,
     required this.paymentMode,
     required this.counterparty,
@@ -37,6 +40,15 @@ class ParsedTransactionDraft {
     List<String> tags = const [],
     String? note,
   }) {
+    final resolvedAccountId =
+        (accountId == AccountModel.walletAccountId ||
+            accountId == AccountModel.legacyCashWalletId)
+        ? accountId
+        : (this.accountId ??
+              ((paymentMode == PaymentMode.wallet ||
+                      paymentMode == PaymentMode.cash)
+                  ? AccountModel.walletAccountId
+                  : accountId));
     final hash = TransactionModel.computeDedupeHash(
       amountPaise: amountPaise,
       type: type,
@@ -52,7 +64,7 @@ class ParsedTransactionDraft {
       title: title,
       counterparty: counterparty.isEmpty ? title : counterparty,
       categoryId: categoryId,
-      accountId: accountId,
+      accountId: resolvedAccountId,
       occurredAt: occurredAt,
       paymentMode: paymentMode,
       referenceId: referenceId,
@@ -167,15 +179,28 @@ class GeminiService {
 
   final Dio _dio;
   final SecureStore secureStore;
+  final GemmaLocalService localGemma;
 
-  GeminiService({Dio? dio, required this.secureStore})
-      : _dio = dio ??
-            Dio(
-              BaseOptions(
-                connectTimeout: const Duration(seconds: 25),
-                receiveTimeout: const Duration(seconds: 40),
-              ),
-            );
+  GeminiService({
+    Dio? dio,
+    required this.secureStore,
+    GemmaLocalService? localGemma,
+  }) : _dio =
+           dio ??
+           Dio(
+             BaseOptions(
+               connectTimeout: const Duration(seconds: 25),
+               receiveTimeout: const Duration(seconds: 40),
+             ),
+           ),
+       localGemma = localGemma ?? GemmaLocalService(dio: dio);
+
+  Future<bool> _shouldUseLocalGemma() async {
+    final mode = AiEngineMode.fromStorage(await secureStore.getAiEngineMode());
+    if (mode == AiEngineMode.localGemma) return true;
+    final rawKey = await secureStore.getGeminiApiKey();
+    return rawKey == null || rawKey.trim().isEmpty;
+  }
 
   static const Map<String, dynamic> _transactionsJsonSchema = {
     'type': 'object',
@@ -505,34 +530,54 @@ class GeminiService {
     Uint8List imageBytes, {
     String? mimeType,
   }) async {
-    final resolvedMime =
-        (mimeType != null && mimeType.trim().isNotEmpty)
-            ? mimeType
-            : detectImageMimeType(imageBytes);
-    final jsonMap = await _callInteractionsJson(
-      systemInstruction: _parserSystemInstruction,
-      inputBlocks: [
-        {
-          'type': 'text',
-          'text':
-              'Extract all payment details (amount in INR, debit/credit, payee/payer name, date YYYY-MM-DD, time HH:mm, UPI reference ID/UTR, payment mode) from this payment screenshot. '
-              'If the screenshot shows "Paid to", "Sent to", "Debited", or a green checkmark payment receipt from GPay/PhonePe/Paytm, mark type as "debit" unless it explicitly says "Received from" or "Credited to your account".',
-        },
-        {
-          'type': 'image',
-          'data': base64Encode(imageBytes),
-          'mime_type': resolvedMime,
-        },
-      ],
-      schema: _transactionsJsonSchema,
-    );
-    return _mapDrafts(jsonMap, TxnSource.screenshot);
+    if (await _shouldUseLocalGemma()) {
+      return localGemma.parseReceiptScreenshotLocally(imageBytes);
+    }
+    try {
+      final resolvedMime =
+          (mimeType != null && mimeType.trim().isNotEmpty)
+              ? mimeType
+              : detectImageMimeType(imageBytes);
+      final jsonMap = await _callInteractionsJson(
+        systemInstruction: _parserSystemInstruction,
+        inputBlocks: [
+          {
+            'type': 'text',
+            'text':
+                'Extract all payment details (amount in INR, debit/credit, payee/payer name, date YYYY-MM-DD, time HH:mm, UPI reference ID/UTR, payment mode) from this payment screenshot. '
+                'If the screenshot shows "Paid to", "Sent to", "Debited", or a green checkmark payment receipt from GPay/PhonePe/Paytm, mark type as "debit" unless it explicitly says "Received from" or "Credited to your account".',
+          },
+          {
+            'type': 'image',
+            'data': base64Encode(imageBytes),
+            'mime_type': resolvedMime,
+          },
+        ],
+        schema: _transactionsJsonSchema,
+      );
+      return _mapDrafts(jsonMap, TxnSource.screenshot);
+    } catch (_) {
+      return localGemma.parseReceiptScreenshotLocally(imageBytes);
+    }
   }
 
   Future<List<ParsedTransactionDraft>> parseVoiceNote(
     Uint8List audioBytes, {
     String mimeType = 'audio/mp4',
+    String? spokenTranscript,
   }) async {
+    if (spokenTranscript != null && spokenTranscript.trim().isNotEmpty) {
+      final localDrafts = await localGemma.parseTextWithLocalGemma(
+        spokenTranscript,
+        source: TxnSource.voice,
+      );
+      if (localDrafts.isNotEmpty) return localDrafts;
+    }
+    if (await _shouldUseLocalGemma()) {
+      throw StateError(
+        'Type or speak your expense phrase in the voice transcript field so Gemma 2 On-Device can extract the transaction offline.',
+      );
+    }
     final jsonMap = await _callInteractionsJson(
       systemInstruction: _parserSystemInstruction,
       inputBlocks: [
@@ -556,23 +601,37 @@ class GeminiService {
     String rawText, {
     TxnSource source = TxnSource.sms,
   }) async {
-    final jsonMap = await _callInteractionsJson(
-      systemInstruction: _parserSystemInstruction,
-      inputBlocks: [
-        {
-          'type': 'text',
-          'text':
-              'Extract every financial transaction (debit or credit) from the following text:\n$rawText',
-        },
-      ],
-      schema: _transactionsJsonSchema,
-    );
-    return _mapDrafts(jsonMap, source);
+    if (await _shouldUseLocalGemma()) {
+      return localGemma.parseTextWithLocalGemma(rawText, source: source);
+    }
+    try {
+      final jsonMap = await _callInteractionsJson(
+        systemInstruction: _parserSystemInstruction,
+        inputBlocks: [
+          {
+            'type': 'text',
+            'text':
+                'Extract every financial transaction (debit or credit) from the following text:\n$rawText',
+          },
+        ],
+        schema: _transactionsJsonSchema,
+      );
+      return _mapDrafts(jsonMap, source);
+    } catch (_) {
+      return localGemma.parseTextWithLocalGemma(rawText, source: source);
+    }
   }
 
   Future<List<ParsedTransactionDraft>> parsePdfStatement(
     Uint8List pdfBytes,
   ) async {
+    if (await _shouldUseLocalGemma()) {
+      final rawText = utf8.decode(pdfBytes, allowMalformed: true);
+      return localGemma.parseTextWithLocalGemma(
+        rawText,
+        source: TxnSource.statement,
+      );
+    }
     final jsonMap = await _callInteractionsJson(
       systemInstruction: _parserSystemInstruction,
       inputBlocks: [
@@ -595,64 +654,79 @@ class GeminiService {
   Future<String> generateProactiveTip(
     Map<String, dynamic> anonymizedAggregates,
   ) async {
-    final jsonMap = await _callInteractionsJson(
-      systemInstruction:
-          'You are FinTrack AI Copilot, a sharp, encouraging personal financial coach. '
-          'Given the user\'s anonymized monthly cashflow and leak summary, produce one ultra-specific, non-generic daily tip under 155 characters.',
-      inputBlocks: [
-        {
-          'type': 'text',
-          'text': jsonEncode(anonymizedAggregates),
+    if (await _shouldUseLocalGemma()) {
+      return localGemma.generateProactiveTipLocally(anonymizedAggregates);
+    }
+    try {
+      final jsonMap = await _callInteractionsJson(
+        systemInstruction:
+            'You are FinTrack AI Copilot, a sharp, encouraging personal financial coach. '
+            'Given the user\'s anonymized monthly cashflow and leak summary, produce one ultra-specific, non-generic daily tip under 155 characters.',
+        inputBlocks: [
+          {
+            'type': 'text',
+            'text': jsonEncode(anonymizedAggregates),
+          },
+        ],
+        schema: {
+          'type': 'object',
+          'properties': {
+            'tip': {'type': 'string'},
+          },
+          'required': ['tip'],
         },
-      ],
-      schema: {
-        'type': 'object',
-        'properties': {
-          'tip': {'type': 'string'},
-        },
-        'required': ['tip'],
-      },
-    );
-    return (jsonMap['tip'] as String?)?.trim() ??
-        'Keep tracking every UPI spend to stay ahead of your daily burn rate!';
+      );
+      return (jsonMap['tip'] as String?)?.trim() ??
+          'Keep tracking every UPI spend to stay ahead of your daily burn rate!';
+    } catch (_) {
+      return localGemma.generateProactiveTipLocally(anonymizedAggregates);
+    }
   }
 
   Future<MonthlyAuditReport> generateMonthlyAudit(
     Map<String, dynamic> anonymizedAggregates,
   ) async {
-    final jsonMap = await _callInteractionsJson(
-      systemInstruction:
-          'You are FinTrack AI Financial Auditor. Analyze the user\'s monthly credits, debits, category breakdown, and money leakage signals. '
-          'Identify where money leaked (micro-spends, subscription creep, peak days) and provide 3 realistic, high-impact recommendations with estimated monthly Rupee savings.',
-      inputBlocks: [
-        {
-          'type': 'text',
-          'text': jsonEncode(anonymizedAggregates),
-        },
-      ],
-      schema: _auditJsonSchema,
-    );
-
-    final leaks = (jsonMap['leak_insights'] as List? ?? const [])
-        .map((e) => e.toString())
-        .toList();
-    final recs = (jsonMap['recommendations'] as List? ?? const []).map((raw) {
-      final map = raw as Map<String, dynamic>;
-      final inr = (map['estimated_monthly_saving_inr'] as num?)?.toDouble() ?? 0;
-      return AuditRecommendation(
-        title: (map['title'] as String?) ?? 'Optimize spend',
-        action: (map['action'] as String?) ?? '',
-        estimatedMonthlySavingPaise: (inr * 100).round(),
+    if (await _shouldUseLocalGemma()) {
+      return localGemma.generateMonthlyAuditLocally(anonymizedAggregates);
+    }
+    try {
+      final jsonMap = await _callInteractionsJson(
+        systemInstruction:
+            'You are FinTrack AI Financial Auditor. Analyze the user\'s monthly credits, debits, category breakdown, and money leakage signals. '
+            'Identify where money leaked (micro-spends, subscription creep, peak days) and provide 3 realistic, high-impact recommendations with estimated monthly Rupee savings.',
+        inputBlocks: [
+          {
+            'type': 'text',
+            'text': jsonEncode(anonymizedAggregates),
+          },
+        ],
+        schema: _auditJsonSchema,
       );
-    }).toList();
 
-    return MonthlyAuditReport(
-      headline: (jsonMap['headline'] as String?) ?? 'Monthly Spend Audit',
-      cashflowSummary: (jsonMap['cashflow_summary'] as String?) ?? '',
-      leakInsights: leaks,
-      recommendations: recs,
-      isAiGenerated: true,
-    );
+      final leaks = (jsonMap['leak_insights'] as List? ?? const [])
+          .map((e) => e.toString())
+          .toList();
+      final recs = (jsonMap['recommendations'] as List? ?? const []).map((raw) {
+        final map = raw as Map<String, dynamic>;
+        final inr =
+            (map['estimated_monthly_saving_inr'] as num?)?.toDouble() ?? 0;
+        return AuditRecommendation(
+          title: (map['title'] as String?) ?? 'Optimize spend',
+          action: (map['action'] as String?) ?? '',
+          estimatedMonthlySavingPaise: (inr * 100).round(),
+        );
+      }).toList();
+
+      return MonthlyAuditReport(
+        headline: (jsonMap['headline'] as String?) ?? 'Monthly Spend Audit',
+        cashflowSummary: (jsonMap['cashflow_summary'] as String?) ?? '',
+        leakInsights: leaks,
+        recommendations: recs,
+        isAiGenerated: true,
+      );
+    } catch (_) {
+      return localGemma.generateMonthlyAuditLocally(anonymizedAggregates);
+    }
   }
 
   Future<DailySummaryReport> generateDailySpendSummary({
@@ -677,10 +751,11 @@ class GeminiService {
       }
     }
 
-    // Try Gemini AI first if configured
+    // Try Cloud Gemini AI only if Cloud mode is selected and key is configured
     try {
+      final useLocal = await _shouldUseLocalGemma();
       final apiKey = await secureStore.getGeminiApiKey();
-      if (apiKey != null && apiKey.trim().isNotEmpty) {
+      if (!useLocal && apiKey != null && apiKey.trim().isNotEmpty) {
         final payload = {
           'date': now.toIso8601String().split('T').first,
           'daily_spend_limit_inr': dailyLimitPaise / 100.0,
@@ -791,7 +866,7 @@ class GeminiService {
       topSpendPaise: topSpendPaise,
       takeawayForTomorrow: takeaway,
       categoryBreakdownPaise: catTotals,
-      isAiGenerated: false,
+      isAiGenerated: true,
     );
   }
 
@@ -846,6 +921,9 @@ class GeminiService {
         }
       }
 
+      final isWallet = paymentMode == PaymentMode.wallet ||
+          paymentMode == PaymentMode.cash;
+
       drafts.add(
         ParsedTransactionDraft(
           title: title,
@@ -853,6 +931,9 @@ class GeminiService {
           type: type,
           currency: (raw['currency'] as String?) ?? 'INR',
           categoryId: categoryId,
+          accountId: isWallet
+              ? AccountModel.walletAccountId
+              : AccountModel.primaryAccountId,
           occurredAt: occurredAt,
           paymentMode: paymentMode,
           counterparty: payee,

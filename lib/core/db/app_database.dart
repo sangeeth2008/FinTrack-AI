@@ -17,9 +17,9 @@ class AppDatabase {
       colorValue: 0xFF10E5A0,
     ),
     AccountModel(
-      id: 'acc_cash',
-      name: 'Cash Wallet',
-      type: 'cash',
+      id: 'acc_wallet',
+      name: 'Digital & Cash Wallet',
+      type: 'wallet',
       initialBalancePaise: 0,
       colorValue: 0xFFE8C468,
     ),
@@ -115,6 +115,15 @@ class AppDatabase {
       password: password,
       version: 1,
       onCreate: _onCreate,
+      onOpen: (db) async {
+        for (final acc in defaultAccounts) {
+          await db.insert(
+            'accounts',
+            acc.toMap(),
+            conflictAlgorithm: sqlcipher.ConflictAlgorithm.ignore,
+          );
+        }
+      },
     );
     return AppDatabase._(db);
   }

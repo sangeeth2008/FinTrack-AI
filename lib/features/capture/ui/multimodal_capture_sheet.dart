@@ -259,11 +259,13 @@ class _MultimodalCaptureSheetState
 
   Future<void> _analyzeScreenshotBytes(Uint8List bytes) async {
     final mime = GeminiService.detectImageMimeType(bytes);
+    final isLocal = ref.read(finTrackControllerProvider).isLocalGemmaActive;
     setState(() {
       _isBusy = true;
       _errorMessage = null;
-      _statusMessage =
-          'Gemini 3.8 Flash Vision scanning UPI screenshot ($mime) for amount, date & UTR…';
+      _statusMessage = isLocal
+          ? 'Gemma 2 On-Device Engine scanning receipt ($mime) offline…'
+          : 'Gemini Vision scanning UPI screenshot ($mime) for amount, date & UTR…';
     });
     try {
       final drafts = await ref
@@ -274,7 +276,7 @@ class _MultimodalCaptureSheetState
         _isBusy = false;
         _statusMessage = drafts.isEmpty
             ? 'No transactions found in screenshot.'
-            : 'Extracted ${drafts.length} transaction(s)! Review and tap Import.';
+            : 'Gemma 2 extracted ${drafts.length} transaction(s)! Review and tap Import.';
       });
     } catch (e) {
       setState(() {
@@ -298,12 +300,15 @@ class _MultimodalCaptureSheetState
           _isBusy = true;
           _errorMessage = null;
           _statusMessage =
-              'Sending audio to Gemini 3.8 Flash for expense & split extraction…';
+              'Analyzing voice note with Gemma 2 On-Device Engine…';
         });
         try {
           final drafts = await ref
               .read(geminiServiceProvider)
-              .parseVoiceNote(bytes);
+              .parseVoiceNote(
+                bytes,
+                spokenTranscript: _voiceTranscriptFallbackCtrl.text.trim(),
+              );
           setState(() {
             _parsedDrafts = drafts;
             _isBusy = false;
@@ -341,7 +346,7 @@ class _MultimodalCaptureSheetState
         _isRecording = true;
         _errorMessage = null;
         _statusMessage =
-            'Listening… Say e.g. "Spent 150 rupees on auto rickshaw with Sravan"';
+            'Listening… Say e.g. "Spent 150 rupees on auto from wallet with Sravan"';
       });
     } catch (e) {
       setState(() {
@@ -355,74 +360,42 @@ class _MultimodalCaptureSheetState
     final text = _voiceTranscriptFallbackCtrl.text.trim();
     if (text.isEmpty) return;
 
-    // Try local natural-language regex + Gemini if available
-    final hasKey = ref.read(finTrackControllerProvider).hasGeminiKey;
-    if (hasKey) {
-      setState(() {
-        _isBusy = true;
-        _errorMessage = null;
-        _statusMessage = 'Gemini 3.8 Flash extracting voice note intent…';
-      });
-      try {
-        final drafts = await ref
-            .read(geminiServiceProvider)
-            .parseTextTransactions(text, source: TxnSource.voice);
+    setState(() {
+      _isBusy = true;
+      _errorMessage = null;
+      _statusMessage =
+          'Gemma 2 On-Device extracting expense, wallet & split intent…';
+    });
+    try {
+      final drafts = await ref
+          .read(geminiServiceProvider)
+          .parseTextTransactions(text, source: TxnSource.voice);
+      if (drafts.isNotEmpty) {
+        final first = drafts.first;
+        if (first.paymentMode == PaymentMode.wallet ||
+            first.accountId == AccountModel.walletAccountId) {
+          _selectedAccountId = AccountModel.walletAccountId;
+          _selectedPaymentMode = PaymentMode.wallet;
+        }
         setState(() {
           _parsedDrafts = drafts;
           _isBusy = false;
-          _statusMessage = 'Extracted ${drafts.length} item(s)!';
+          _statusMessage =
+              'Gemma 2 On-Device extracted ${drafts.length} item(s)!';
         });
         return;
-      } catch (_) {
-        setState(() => _isBusy = false);
       }
+      setState(() {
+        _isBusy = false;
+        _errorMessage =
+            'Could not detect an amount in phrase. Include a number (e.g. "Spent 150 on auto from wallet").';
+      });
+    } catch (e) {
+      setState(() {
+        _isBusy = false;
+        _errorMessage = e.toString().replaceAll('Bad state: ', '');
+      });
     }
-
-    // Fast offline natural language parser for e.g. "Spent 150 rupees on auto with Sravan"
-    final numMatch = RegExp(r'(\d+(?:\.\d{1,2})?)').firstMatch(text);
-    if (numMatch == null) {
-      setState(() => _errorMessage = 'Could not detect an amount in note.');
-      return;
-    }
-    final rupees = double.parse(numMatch.group(1)!);
-    final isCredit = RegExp(
-      r'\b(received|credited|got|salary|stipend)\b',
-      caseSensitive: false,
-    ).hasMatch(text);
-    final type = isCredit ? TxnType.credit : TxnType.debit;
-
-    final withMatch = RegExp(
-      r'\bwith\s+([A-Za-z][A-Za-z\s,and]+)$',
-      caseSensitive: false,
-    ).firstMatch(text);
-    final friends = <String>[];
-    if (withMatch != null) {
-      friends.addAll(
-        withMatch
-            .group(1)!
-            .split(RegExp(r',|\band\b'))
-            .map((s) => s.trim())
-            .where((s) => s.isNotEmpty),
-      );
-    }
-
-    final catId = SmsRegexParser.inferCategoryId(text: text, type: type);
-    setState(() {
-      _parsedDrafts = [
-        ParsedTransactionDraft(
-          title: text.length > 34 ? '${text.substring(0, 34)}…' : text,
-          amountPaise: (rupees * 100).round(),
-          type: type,
-          categoryId: catId,
-          occurredAt: DateTime.now(),
-          paymentMode: PaymentMode.upi,
-          counterparty: text,
-          splitFriends: friends,
-          source: TxnSource.voice,
-        ),
-      ];
-      _statusMessage = 'Extracted voice note item!';
-    });
   }
 
   Future<void> _pasteFromClipboard() async {
@@ -449,12 +422,11 @@ class _MultimodalCaptureSheetState
         _parsedDrafts = localMatches;
         _errorMessage = null;
         _statusMessage =
-            'Instant Regex Engine extracted ${localMatches.length} transaction(s)!';
+            'Instant On-Device Engine extracted ${localMatches.length} transaction(s)!';
       });
       return;
     }
 
-    // Fallback to Gemini AI
     await _parseSmsOrLogWithGemini();
   }
 
@@ -465,17 +437,23 @@ class _MultimodalCaptureSheetState
       _isBusy = true;
       _errorMessage = null;
       _statusMessage =
-          'Gemini 3.8 Flash parsing transaction details & dates…';
+          'Gemma 2 On-Device Engine parsing transaction details…';
     });
     try {
       final drafts = await ref
           .read(geminiServiceProvider)
           .parseTextTransactions(text, source: TxnSource.sms);
+      if (drafts.isNotEmpty &&
+          drafts.first.accountId == AccountModel.walletAccountId) {
+        _selectedAccountId = AccountModel.walletAccountId;
+        _selectedPaymentMode = PaymentMode.wallet;
+      }
       setState(() {
         _parsedDrafts = drafts;
         _isBusy = false;
-        _statusMessage =
-            'Gemini AI extracted ${drafts.length} transaction(s)!';
+        _statusMessage = drafts.isEmpty
+            ? 'No valid transaction amount detected in text.'
+            : 'Gemma 2 On-Device extracted ${drafts.length} transaction(s)!';
       });
     } catch (e) {
       setState(() {
@@ -698,7 +676,7 @@ class _MultimodalCaptureSheetState
                       ),
                     ),
                   if (_activeTab != CaptureTab.manual &&
-                      (!state.hasGeminiKey || _showInlineKeyEditor))
+                      (!state.isAiReady || _showInlineKeyEditor))
                     _buildInlineGeminiKeyCard(luxe, state),
                   if (_activeTab == CaptureTab.manual)
                     _buildManualEntryView(luxe, state)
@@ -1073,11 +1051,153 @@ class _MultimodalCaptureSheetState
           }).toList(),
         ),
         const SizedBox(height: 14),
+        Text(
+          'DEBIT / CREDIT SOURCE ACCOUNT',
+          style: Theme.of(context).textTheme.labelSmall,
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: GestureDetector(
+                onTap: () {
+                  LuxeHaptics.selection();
+                  setState(() {
+                    _selectedAccountId = state.primaryAccount.id;
+                    if (_selectedPaymentMode == PaymentMode.wallet) {
+                      _selectedPaymentMode = PaymentMode.upi;
+                    }
+                  });
+                },
+                child: AnimatedContainer(
+                  duration: LuxeMotion.fast,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _selectedAccountId == state.primaryAccount.id
+                        ? luxe.emerald.withValues(alpha: 0.18)
+                        : luxe.surfaceGlass,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: _selectedAccountId == state.primaryAccount.id
+                          ? luxe.emerald
+                          : luxe.borderSubtle,
+                      width: _selectedAccountId == state.primaryAccount.id
+                          ? 1.5
+                          : 1.0,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.account_balance_rounded,
+                        size: 18,
+                        color: luxe.emerald,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Main Bank & UPI',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(
+                              '₹${(state.cashflow.mainAccountBalancePaise / 100).toStringAsFixed(0)} avail',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                color: luxe.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: GestureDetector(
+                onTap: () {
+                  LuxeHaptics.selection();
+                  setState(() {
+                    _selectedAccountId = state.walletAccount.id;
+                    _selectedPaymentMode = PaymentMode.wallet;
+                  });
+                },
+                child: AnimatedContainer(
+                  duration: LuxeMotion.fast,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _selectedAccountId == state.walletAccount.id
+                        ? luxe.gold.withValues(alpha: 0.20)
+                        : luxe.surfaceGlass,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: _selectedAccountId == state.walletAccount.id
+                          ? luxe.gold
+                          : luxe.borderSubtle,
+                      width: _selectedAccountId == state.walletAccount.id
+                          ? 1.5
+                          : 1.0,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.account_balance_wallet_rounded,
+                        size: 18,
+                        color: luxe.gold,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Wallet Money',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(
+                              '₹${(state.cashflow.walletBalancePaise / 100).toStringAsFixed(0)} • Debits Wallet',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                color: luxe.gold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
               child: DropdownButtonFormField<String>(
-                initialValue: _selectedAccountId,
+                key: ValueKey(_selectedAccountId),
+                initialValue: state.accounts.any((a) => a.id == _selectedAccountId)
+                    ? _selectedAccountId
+                    : state.accounts.first.id,
                 decoration: const InputDecoration(labelText: 'Account'),
                 items: state.accounts
                     .map(
@@ -1085,13 +1205,21 @@ class _MultimodalCaptureSheetState
                     )
                     .toList(),
                 onChanged: (v) {
-                  if (v != null) setState(() => _selectedAccountId = v);
+                  if (v != null) {
+                    setState(() {
+                      _selectedAccountId = v;
+                      if (v == state.walletAccount.id) {
+                        _selectedPaymentMode = PaymentMode.wallet;
+                      }
+                    });
+                  }
                 },
               ),
             ),
             const SizedBox(width: 10),
             Expanded(
               child: DropdownButtonFormField<PaymentMode>(
+                key: ValueKey(_selectedPaymentMode),
                 initialValue: _selectedPaymentMode,
                 decoration: const InputDecoration(labelText: 'Mode'),
                 items: PaymentMode.values
@@ -1100,7 +1228,14 @@ class _MultimodalCaptureSheetState
                     )
                     .toList(),
                 onChanged: (v) {
-                  if (v != null) setState(() => _selectedPaymentMode = v);
+                  if (v != null) {
+                    setState(() {
+                      _selectedPaymentMode = v;
+                      if (v == PaymentMode.wallet || v == PaymentMode.cash) {
+                        _selectedAccountId = state.walletAccount.id;
+                      }
+                    });
+                  }
                 },
               ),
             ),
@@ -1431,7 +1566,7 @@ class _MultimodalCaptureSheetState
               Text(
                 _isRecording
                     ? 'Recording Voice Note… Tap to Stop & Analyze'
-                    : 'Tap Mic to Log by Voice (Gemini 3.8 Flash Audio)',
+                    : 'Tap Mic or Type Phrase (Gemma 2 On-Device Engine)',
                 style: Theme.of(context).textTheme.titleMedium,
                 textAlign: TextAlign.center,
               ),
@@ -1456,7 +1591,7 @@ class _MultimodalCaptureSheetState
                 controller: _voiceTranscriptFallbackCtrl,
                 decoration: InputDecoration(
                   hintText:
-                      'Or type quick voice phrase: "Spent 150 on auto with Sravan"',
+                      'Say or type: "Spent 150 on auto from wallet with Sravan"',
                   suffixIcon: IconButton(
                     icon: Icon(Icons.send_rounded, color: luxe.emerald),
                     onPressed: _parseVoiceNoteTextSimulation,
@@ -1596,7 +1731,7 @@ class _MultimodalCaptureSheetState
                   const SizedBox(width: 10),
                   Expanded(
                     child: GradientButton(
-                      label: 'Gemini AI Parse',
+                      label: 'Gemma 2 Local Parse',
                       icon: Icons.auto_awesome_rounded,
                       gradient: luxe.copilotGradient,
                       isLoading: _isBusy,
@@ -1625,7 +1760,7 @@ class _MultimodalCaptureSheetState
           ),
           const SizedBox(height: 6),
           Text(
-            'CSVs are parsed 100% offline. PDFs are analyzed via Gemini 3.8 Flash Document Engine. Existing reference IDs & hashes are automatically deduplicated.',
+            'CSVs & PDFs are parsed 100% locally via FinTrack\'s On-Device Gemma 2 Engine. Existing reference IDs & hashes are automatically deduplicated.',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyMedium,
           ),

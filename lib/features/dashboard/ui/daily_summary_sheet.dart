@@ -126,9 +126,11 @@ class _DailySummarySheetState extends ConsumerState<DailySummarySheet> {
                         style: Theme.of(context).textTheme.titleLarge,
                       ),
                       Text(
-                        summary?.isAiGenerated == true
-                            ? 'Gemini 3.8 Flash AI Daily Analysis'
-                            : 'Automated On-Device Daily Review',
+                        state.isLocalGemmaActive
+                            ? 'Gemma 2 On-Device Daily Analysis'
+                            : (summary?.isAiGenerated == true
+                                  ? 'Gemini Cloud Daily Analysis'
+                                  : 'Automated On-Device Daily Review'),
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                               fontSize: 12,
                               color: luxe.textSecondary,
